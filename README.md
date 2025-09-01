@@ -48,6 +48,8 @@ imagefind --scan-dir <DIR> --db-path <FILE>
 ```
 
 - Both arguments are required.
+- ImageFind needs to run from the machine where the collection is on.
+- The firewall on the machine needs to be opened for port `8080`.
 
 ### CLI Arguments
 
@@ -153,6 +155,11 @@ Once indexing is complete, the Actix Web server starts and listens for requests.
   - Force refresh: /image/{path}?t=1690000000000
 - No results
   - Confirm --scan-dir contains .xmp files and DB path is writable.
+
+## Todo
+
+- Configurable port number for the webserver.
+- Preview rendering of videos
 
 ## License
 
