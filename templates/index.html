@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ImageFind - Search Your Images</title>
+    <style>
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            text-align: center;
+            max-width: 500px;
+            width: 90%;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+            font-weight: 300;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+        
+        .search-form {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .search-input {
+            flex: 1;
+            padding: 15px 20px;
+            font-size: 16px;
+            border: 2px solid #e1e5e9;
+            border-radius: 10px;
+            outline: none;
+            transition: border-color 0.3s ease;
+        }
+        
+        .search-input:focus {
+            border-color: #667eea;
+        }
+        
+        .search-button {
+            padding: 15px 30px;
+            font-size: 16px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            font-weight: 500;
+        }
+        
+        .search-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        
+        .search-button:active {
+            transform: translateY(0);
+        }
+        
+        .features {
+            margin-top: 30px;
+            text-align: left;
+        }
+        
+        .feature {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+            color: #555;
+        }
+        
+        .feature-icon {
+            width: 20px;
+            height: 20px;
+            margin-right: 15px;
+            background: #667eea;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
+        .api-info {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            text-align: left;
+        }
+        
+        .api-info h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        
+        .endpoint {
+            font-family: monospace;
+            background: #e9ecef;
+            padding: 5px 10px;
+            border-radius: 5px;
+            margin: 5px 0;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 ImageFind</h1>
+        <p class="subtitle">Search through your image metadata and view thumbnails</p>
+        
+        <form method="GET" action="/" class="search-form">
+            <input 
+                type="text" 
+                name="search" 
+                class="search-input" 
+                placeholder="Search for images by metadata... (use AND for multiple terms)" 
+                required
+                autofocus
+            />
+            <button type="submit" class="search-button">Search</button>
+        </form>
+        
+        <div class="features">
+            <div class="feature">
+                <div class="feature-icon">✓</div>
+                <div>Search through XMP metadata in images</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">🔍</div>
+                <div>Use AND keyword for precise searches (e.g., "lycke AND johanna AND kristian")</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">🖼</div>
+                <div>Auto-generated thumbnails for images (JPG, PNG, TIFF, RAW formats), videos with 90° rotation</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">⚡</div>
+                <div>Fast caching for improved performance</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">📱</div>
+                <div>Responsive grid layout for all devices</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">🏹</div>
+                <div>Modal navigation with arrow keys and buttons</div>
+            </div>
+        </div>
+        
+        <div class="api-info">
+            <h3>API Endpoints</h3>
+            <div>
+                <strong>Search:</strong> 
+                <code class="endpoint">GET /?search=your_query</code>
+            </div>
+            <div>
+                <strong>JSON API:</strong> 
+                <code class="endpoint">GET /api?search=your_query</code>
+            </div>
+            <div>
+                <strong>Health Check:</strong> 
+                <code class="endpoint">GET /health_check</code>
+            </div>
+        </div>
+    </div>
+</body>
+</html> 

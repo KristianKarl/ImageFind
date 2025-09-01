@@ -1,0 +1,431 @@
+    </div>
+    
+    <!-- Modal for image preview -->
+    <div id="imageModal" class="modal">
+        <div class="modal-content" id="modalContent" style="display:block; max-width:90vw; max-height:90vh;">
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+            <div class="modal-counter" id="modalCounter">1 / 1</div>
+            <div class="modal-rotate-controls">
+                <button class="modal-rotate-btn" id="rotateLeft" onclick="rotateImage(-90)" title="Rotate Left (Q)">⟲</button>
+                <button class="modal-rotate-btn" id="rotateRight" onclick="rotateImage(90)" title="Rotate Right (E)">⟳</button>
+            </div>
+            <button class="modal-nav modal-nav-left" id="modalPrev" onclick="navigateModal(-1)">‹</button>
+            <button class="modal-nav modal-nav-right" id="modalNext" onclick="navigateModal(1)">›</button>
+            <div class="modal-image-container"><img id="modalImage" class="modal-image" src="" alt="" style="display:block; object-fit:contain;" /></div>
+            <div id="modalInfo" class="modal-info"></div>
+        </div>
+    </div>
+    
+    <script>
+        // Global variables for modal navigation
+        let currentImages = [];
+        let currentImageIndex = 0;
+        let currentRotation = 0; // Track current rotation in degrees
+        
+        // Collect all image data when page loads
+        function collectImageData() {
+            currentImages = [];
+            const thumbnails = document.querySelectorAll('.thumbnail');
+            thumbnails.forEach((thumbnail, index) => {
+                const onClick = thumbnail.getAttribute('onclick');
+                if (onClick) {
+                    // Extract image path and description from onclick
+                    const match = onClick.match(/openModal\('([^']+)',\s*'([^']*)'/);
+                    if (match) {
+                        currentImages.push({
+                            path: match[1],
+                            description: match[2],
+                            element: thumbnail
+                        });
+                    }
+                }
+            });
+        }
+        
+        function openModal(imagePath, description) {
+            // Collect current images if not already done
+            if (currentImages.length === 0) {
+                collectImageData();
+            }
+            
+            // Find the index of the current image
+            currentImageIndex = currentImages.findIndex(img => img.path === imagePath);
+            if (currentImageIndex === -1) currentImageIndex = 0;
+            
+            // Reset rotation when opening a new modal
+            currentRotation = 0;
+            
+            const modal = document.getElementById('imageModal');
+            const modalImage = document.getElementById('modalImage');
+            const modalInfo = document.getElementById('modalInfo');
+            const modalCounter = document.getElementById('modalCounter');
+            const modalPrev = document.getElementById('modalPrev');
+            const modalNext = document.getElementById('modalNext');
+            
+            // Update counter and navigation buttons
+            updateModalCounter();
+            modalPrev.disabled = currentImageIndex === 0;
+            modalNext.disabled = currentImageIndex === currentImages.length - 1;
+            
+            // Show loading state
+            modalImage.src = '';
+            modalImage.style.display = 'none';
+            modalImage.style.transform = 'rotate(0deg)'; // Reset rotation transform
+            modalInfo.innerHTML = '<div style="text-align: center; padding: 40px; color: #666; font-size: 16px;"><div style="margin-bottom: 10px;">🔄</div>Loading preview...</div>';
+            
+            // Show the modal immediately with loading state
+            modal.style.display = 'block';
+            document.body.style.overflow = 'hidden';
+            
+            // Load the image
+            loadModalImage(imagePath, description);
+        }
+        
+        function loadModalImage(imagePath, description) {
+            const modalImage = document.getElementById('modalImage');
+            const modalInfo = document.getElementById('modalInfo');
+            const modalContent = document.getElementById('modalContent');
+
+            // Function to fetch error details from server
+            async function getErrorDetails(url) {
+                try {
+                    const response = await fetch(url);
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        return `Error ${response.status}: ${errorText}`;
+                    }
+                    return null;
+                } catch (e) {
+                    return `Network error: ${e.message}`;
+                }
+            }
+
+            // Helper to resize modal for rotated image
+            function resizeModalForImage(naturalWidth, naturalHeight, rotation) {
+                let imgW = naturalWidth;
+                let imgH = naturalHeight;
+                if (rotation % 180 === 90) {
+                    // Swap width/height for 90/270 deg
+                    [imgW, imgH] = [imgH, imgW];
+                }
+                // Add 60px for info bar
+                const maxW = window.innerWidth * 0.9;
+                const maxH = window.innerHeight * 0.9;
+                // Fit image+info into bounding box
+                let scale = Math.min(maxW / imgW, (maxH) / (imgH + 60), 1);
+                const modalW = Math.round(imgW * scale);
+                const modalH = Math.round(imgH * scale + 60);
+                modalContent.style.width = modalW + 'px';
+                modalContent.style.height = modalH + 'px';
+                // Set max-width/max-height for image
+                modalImage.style.maxWidth = (rotation % 180 === 90) ? (maxH - 60) + 'px' : maxW + 'px';
+                modalImage.style.maxHeight = (rotation % 180 === 90) ? maxW + 'px' : (maxH - 60) + 'px';
+            }
+
+            // Create a new image object to preload the correct image
+            const img = new Image();
+
+            img.onload = function() {
+                // Image loaded successfully, show it
+                console.log('Image loaded successfully:', imagePath);
+                modalImage.src = img.src;
+                modalImage.style.display = 'block';
+                modalImage.style.transform = `rotate(${currentRotation}deg)`; // Apply current rotation
+                modalImage.style.transition = 'transform 0.3s ease';
+                modalInfo.innerHTML = description;
+                resizeModalForImage(img.naturalWidth, img.naturalHeight, currentRotation);
+            };
+            
+            img.onerror = async function() {
+                // Image failed to load, show conversion message and try with cache-busting
+                console.log('First image load failed, image likely needs conversion:', imagePath);
+                modalInfo.innerHTML = '<div style="text-align: center; padding: 40px; color: #666; font-size: 16px;"><div style="margin-bottom: 10px;">⚙️</div>Converting image to preview format...</div>';
+                
+                const imgRetry = new Image();
+                imgRetry.onload = function() {
+                    console.log('Retry successful:', imagePath);
+                    modalImage.src = imgRetry.src;
+                    modalImage.style.display = 'block';
+                    modalImage.style.transform = `rotate(${currentRotation}deg)`; // Apply current rotation
+                    modalImage.style.transition = 'transform 0.3s ease';
+                    modalInfo.innerHTML = description;
+                };
+                imgRetry.onerror = async function() {
+                    // Both attempts failed, get detailed error info
+                    console.error('Both image load attempts failed:', imagePath);
+                    modalImage.style.display = 'none';
+                    
+                    // Try to get the actual error message from the server
+                    const timestamp = new Date().getTime();
+                    const errorUrl = imagePath + '?t=' + timestamp;
+                    const errorDetails = await getErrorDetails(errorUrl);
+                    
+                    console.error('Server error details:', errorDetails);
+                    
+                    modalInfo.innerHTML = `
+                        <div style="text-align: center; padding: 20px; color: #d32f2f;">
+                            <h3>Failed to load image preview</h3>
+                            <p style="font-family: monospace; background: #f5f5f5; padding: 10px; border-radius: 4px; margin-top: 10px;">
+                                File: ${imagePath}<br>
+                                ${errorDetails || 'Unknown error'}
+                            </p>
+                            <p style="margin-top: 10px; font-size: 12px; color: #666;">
+                                Check the browser console and server logs for more details.
+                            </p>
+                        </div>
+                    `;
+                };
+                // Retry with cache-busting
+                const timestamp = new Date().getTime();
+                imgRetry.src = imagePath + '?t=' + timestamp;
+            };
+            
+            // First try without cache-busting (allows cached images to load)
+            img.src = imagePath;
+        }
+        
+        function navigateModal(direction) {
+            if (currentImages.length === 0) return;
+            
+            const newIndex = currentImageIndex + direction;
+            if (newIndex < 0 || newIndex >= currentImages.length) return;
+            
+            currentImageIndex = newIndex;
+            const currentImage = currentImages[currentImageIndex];
+            
+            // Reset rotation when navigating to a new image
+            currentRotation = 0;
+            
+            // Update counter and navigation buttons
+            updateModalCounter();
+            const modalPrev = document.getElementById('modalPrev');
+            const modalNext = document.getElementById('modalNext');
+            modalPrev.disabled = currentImageIndex === 0;
+            modalNext.disabled = currentImageIndex === currentImages.length - 1;
+            
+            // Show loading state immediately for navigation
+            const modalImage = document.getElementById('modalImage');
+            const modalInfo = document.getElementById('modalInfo');
+            
+            // Hide current image and show loading message
+            modalImage.src = '';
+            modalImage.style.display = 'none';
+            modalImage.style.transform = 'rotate(0deg)'; // Reset rotation transform
+            modalInfo.innerHTML = '<div style="text-align: center; padding: 40px; color: #666; font-size: 16px;"><div style="margin-bottom: 10px;">🔄</div>Image being converted...</div>';
+            
+            // Load the new image
+            loadModalImage(currentImage.path, currentImage.description);
+        }
+        
+        // Function to rotate the current image
+        function rotateImage(degrees) {
+            const modal = document.getElementById('imageModal');
+            if (modal.style.display !== 'block') return; // Only rotate if modal is open
+
+            const modalImage = document.getElementById('modalImage');
+            if (modalImage.style.display === 'none') return; // Only rotate if image is loaded
+
+            // Update rotation state
+            currentRotation = (currentRotation + degrees) % 360;
+            if (currentRotation < 0) currentRotation += 360;
+
+            // Apply rotation transform
+            modalImage.style.transform = `rotate(${currentRotation}deg)`;
+            modalImage.style.transition = 'transform 0.3s ease';
+
+            // Dynamically resize modal and image for new orientation
+            // Get natural size from loaded image
+            const img = new window.Image();
+            img.src = modalImage.src;
+            img.onload = function() {
+                // Use same helper as in loadModalImage
+                const modalContent = document.getElementById('modalContent');
+                function resizeModalForImage(naturalWidth, naturalHeight, rotation) {
+                    let imgW = naturalWidth;
+                    let imgH = naturalHeight;
+                    if (rotation % 180 === 90) {
+                        [imgW, imgH] = [imgH, imgW];
+                    }
+                    const maxW = window.innerWidth * 0.9;
+                    const maxH = window.innerHeight * 0.9;
+                    let scale = Math.min(maxW / imgW, (maxH) / (imgH + 60), 1);
+                    const modalW = Math.round(imgW * scale);
+                    const modalH = Math.round(imgH * scale + 60);
+                    modalContent.style.width = modalW + 'px';
+                    modalContent.style.height = modalH + 'px';
+                    modalImage.style.maxWidth = (rotation % 180 === 90) ? (maxH - 60) + 'px' : maxW + 'px';
+                    modalImage.style.maxHeight = (rotation % 180 === 90) ? maxW + 'px' : (maxH - 60) + 'px';
+                }
+                resizeModalForImage(img.naturalWidth, img.naturalHeight, currentRotation);
+            };
+
+            // If image is already loaded, onload may not fire, so call directly if possible
+            if (modalImage.naturalWidth && modalImage.naturalHeight) {
+                const modalContent = document.getElementById('modalContent');
+                function resizeModalForImage(naturalWidth, naturalHeight, rotation) {
+                    let imgW = naturalWidth;
+                    let imgH = naturalHeight;
+                    if (rotation % 180 === 90) {
+                        [imgW, imgH] = [imgH, imgW];
+                    }
+                    const maxW = window.innerWidth * 0.9;
+                    const maxH = window.innerHeight * 0.9;
+                    let scale = Math.min(maxW / imgW, (maxH) / (imgH + 60), 1);
+                    const modalW = Math.round(imgW * scale);
+                    const modalH = Math.round(imgH * scale + 60);
+                    modalContent.style.width = modalW + 'px';
+                    modalContent.style.height = modalH + 'px';
+                    modalImage.style.maxWidth = (rotation % 180 === 90) ? (maxH - 60) + 'px' : maxW + 'px';
+                    modalImage.style.maxHeight = (rotation % 180 === 90) ? maxW + 'px' : (maxH - 60) + 'px';
+                }
+                resizeModalForImage(modalImage.naturalWidth, modalImage.naturalHeight, currentRotation);
+            }
+
+            console.log(`Rotated image to ${currentRotation} degrees`);
+        }
+        
+        function updateModalCounter() {
+            const modalCounter = document.getElementById('modalCounter');
+            modalCounter.textContent = `${currentImageIndex + 1} / ${currentImages.length}`;
+        }
+        
+        function closeModal() {
+            const modal = document.getElementById('imageModal');
+            modal.style.display = 'none';
+            
+            // Restore body scrolling
+            document.body.style.overflow = 'auto';
+            
+            // Clear the image source to prevent caching issues
+            const modalImage = document.getElementById('modalImage');
+            modalImage.src = '';
+        }
+        
+        // Close modal when clicking outside the image
+        document.getElementById('imageModal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeModal();
+            }
+        });
+        
+        // Enhanced keyboard navigation
+        document.addEventListener('keydown', function(e) {
+            const modal = document.getElementById('imageModal');
+            if (modal.style.display === 'block') {
+                switch(e.key) {
+                    case 'Escape':
+                        closeModal();
+                        break;
+                    case 'ArrowLeft':
+                        e.preventDefault();
+                        navigateModal(-1);
+                        break;
+                    case 'ArrowRight':
+                        e.preventDefault();
+                        navigateModal(1);
+                        break;
+                    case 'q':
+                    case 'Q':
+                        e.preventDefault();
+                        rotateImage(-90);
+                        break;
+                    case 'e':
+                    case 'E':
+                        e.preventDefault();
+                        rotateImage(90);
+                        break;
+                }
+            }
+        });
+        
+        // Async thumbnail loading functionality
+        async function loadThumbnails() {
+            const resultItems = document.querySelectorAll('.result-item[data-file-path]');
+            console.log(`Starting to load ${resultItems.length} thumbnails...`);
+            
+            // Limit concurrent requests to avoid overwhelming the server
+            const maxConcurrent = 6;
+            let currentRequests = 0;
+            let completed = 0;
+            
+            function processNextThumbnail(index) {
+                if (index >= resultItems.length) return;
+                
+                const item = resultItems[index];
+                const filePath = item.getAttribute('data-file-path');
+                const placeholder = item.querySelector('.thumbnail-placeholder');
+                const thumbnail = item.querySelector('.thumbnail');
+                
+                currentRequests++;
+                
+                // Make request to thumbnail endpoint
+                fetch(`/thumbnail/${filePath}`)
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`HTTP ${response.status}`);
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        if (data.thumbnail) {
+                            // Thumbnail loaded successfully
+                            thumbnail.src = `data:image/jpeg;base64,${data.thumbnail}`;
+                            thumbnail.style.display = 'block';
+                            placeholder.style.display = 'none';
+                            
+                            // Add hover effect
+                            thumbnail.style.cursor = 'pointer';
+                            thumbnail.style.transition = 'transform 0.2s ease, box-shadow 0.2s ease';
+                        } else {
+                            // No thumbnail available
+                            placeholder.innerHTML = `
+                                <div class="error-icon">📷</div>
+                                <div style="font-size: 10px;">No Preview</div>
+                            `;
+                            placeholder.style.background = '#f8f9fa';
+                            placeholder.style.color = '#6c757d';
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Thumbnail loading failed:', filePath, error);
+                        // Show error state
+                        placeholder.innerHTML = `
+                            <div class="error-icon">⚠️</div>
+                            <div style="font-size: 10px;">Load Failed</div>
+                        `;
+                        placeholder.style.background = '#ffe6e6';
+                        placeholder.style.color = '#cc0000';
+                    })
+                    .finally(() => {
+                        currentRequests--;
+                        completed++;
+                        console.log(`Thumbnail ${completed}/${resultItems.length} completed: ${filePath}`);
+                        
+                        // Process next thumbnail if there are more and we have capacity
+                        const nextIndex = index + maxConcurrent;
+                        if (nextIndex < resultItems.length && currentRequests < maxConcurrent) {
+                            processNextThumbnail(nextIndex);
+                        }
+                        
+                        // If all requests are done, update modal navigation data
+                        if (completed === resultItems.length) {
+                            console.log('All thumbnails loaded, updating modal data...');
+                            collectImageData();
+                        }
+                    });
+            }
+            
+            // Start initial batch of requests
+            for (let i = 0; i < Math.min(maxConcurrent, resultItems.length); i++) {
+                processNextThumbnail(i);
+            }
+        }
+        
+        // Collect image data when page loads and start thumbnail loading
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('Page loaded, starting thumbnail loading...');
+            loadThumbnails();
+        });
+    </script>
+</body>
+</html> 
