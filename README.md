@@ -43,6 +43,8 @@ This tool will enable you to quickly find and view any image in your collection.
 
 ### Usage
 
+To be able to create thumbnails from videos, ffmpeg needs to be installed.
+
 ```
 imagefind --scan-dir <DIR> --db-path <FILE>
 ```
