@@ -13,6 +13,7 @@ target/
 
 # dev environment
 .vscode/
+.idea
 
 # cache
 thumbnail_cache/

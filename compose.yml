@@ -1,0 +1,18 @@
+services:
+  web:
+    build:
+     context: .
+     network: host
+    ports:
+      - "8080:8080"
+    volumes:
+      - /path/to/scan/dir:/scan-dir:ro
+      - db:/db
+      - img-cache:/full-image-cache
+      - thumbs-cache:/thumbnail-cache
+    restart: unless-stopped
+volumes:
+  db:
+  img-cache:
+  thumbs-cache:
+
