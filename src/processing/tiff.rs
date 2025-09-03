@@ -40,10 +40,31 @@ pub fn convert_tiff_to_rgb_jpeg(
     log::info!("TIFF dimensions: {}x{}", width, height);
     
     match decoder.read_image() {
-        Ok(tiff::decoder::DecodingResult::U8(rgb_data)) => {
-            log::debug!("Successfully decoded TIFF as 8-bit RGB data, {} bytes", rgb_data.len());
-            
-            if let Some(rgb_img) = RgbImage::from_raw(width, height, rgb_data) {
+        Ok(tiff::decoder::DecodingResult::U8(data)) => {
+            // Detect color type
+            let color_type = decoder.colortype().unwrap_or(tiff::ColorType::RGB(8));
+            log::debug!("TIFF color type: {:?}", color_type);
+
+            let rgb_data = match color_type {
+                tiff::ColorType::Gray(nbits) => {
+                    log::info!("TIFF is greyscale ({} bits), converting to RGB", nbits);
+                    // Convert grayscale to RGB by duplicating each value
+                    data.iter().flat_map(|v| std::iter::repeat(*v).take(3)).collect::<Vec<u8>>()
+                }
+                tiff::ColorType::RGB(_) => {
+                    data
+                }
+                _ => {
+                    log::warn!("TIFF color type not handled: {:?}", color_type);
+                    data
+                }
+            };
+
+            let rgb_width = width;
+            let rgb_height = height;
+            let rgb_img = RgbImage::from_raw(rgb_width, rgb_height, rgb_data);
+
+            if let Some(rgb_img) = rgb_img {
                 log::trace!("Created RGB image from raw data");
                 
                 let dynamic_img = DynamicImage::ImageRgb8(rgb_img);
@@ -80,16 +101,33 @@ pub fn convert_tiff_to_rgb_jpeg(
                 }
             } else {
                 log::error!("Failed to create RGB image from TIFF data for {}", file_path);
-                Err("Failed to create RGB image from TIFF data".to_string())
+                Err("Failed to create RGB image from TIFF data for {}".to_string())
             }
         }
         Ok(tiff::decoder::DecodingResult::U16(data)) => {
-            log::info!("TIFF file {} has 16-bit data ({} values), converting to 8-bit", file_path, data.len());
-            
-            let rgb_data: Vec<u8> = data.iter().map(|&x| (x >> 8) as u8).collect();
-            log::debug!("Converted 16-bit to 8-bit data, {} bytes", rgb_data.len());
-            
-            if let Some(rgb_img) = RgbImage::from_raw(width, height, rgb_data) {
+            let color_type = decoder.colortype().unwrap_or(tiff::ColorType::RGB(16));
+            log::debug!("TIFF color type: {:?}", color_type);
+
+            let rgb_data: Vec<u8> = match color_type {
+                tiff::ColorType::Gray(nbits) => {
+                    log::info!("TIFF is 16-bit greyscale, converting to 8-bit RGB");
+                    // Convert grayscale to RGB by duplicating each value
+                    data.iter().flat_map(|x| {
+                        let v = (x >> 8) as u8;
+                        [v, v, v]
+                    }).collect()
+                }
+                tiff::ColorType::RGB(_) => {
+                    data.iter().map(|&x| (x >> 8) as u8).collect()
+                }
+                _ => {
+                    log::warn!("TIFF color type not handled: {:?}", color_type);
+                    data.iter().map(|&x| (x >> 8) as u8).collect()
+                }
+            };
+
+            let rgb_img = RgbImage::from_raw(width, height, rgb_data);
+            if let Some(rgb_img) = rgb_img {
                 log::trace!("Created RGB image from 16-bit converted data");
                 
                 let dynamic_img = DynamicImage::ImageRgb8(rgb_img);
