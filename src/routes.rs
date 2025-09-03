@@ -701,3 +701,60 @@ pub async fn serve_image(path: web::Path<String>, query: web::Query<HashMap<Stri
         }
     }
 }
+
+// Add this function near the other endpoints
+pub async fn serve_video(path: web::Path<String>) -> impl Responder {
+    let video_path = path.into_inner();
+    log::info!("Video preview request for: {}", video_path);
+
+    // Decode URL-encoded path
+    let decoded_path = urlencoding::decode(&video_path).unwrap_or_else(|_| video_path.clone().into());
+    let clean_path = decoded_path.to_string();
+
+    // Security check - prevent path traversal
+    if clean_path.contains("..") {
+        log::warn!("Path traversal attempt blocked for video: {}", clean_path);
+        return HttpResponse::BadRequest().body("Invalid path: path traversal not allowed");
+    }
+
+    // Get video preview cache directory from CLI args
+    let args = get_cli_args();
+    let preview_cache_dir = std::path::Path::new(&args.video_preview_cache);
+
+    // Build the _480p preview filename (basename + _480p.mp4)
+    let orig_path = std::path::Path::new(&clean_path);
+    let stem = orig_path.file_stem();
+    let ext = orig_path.extension();
+
+    let transcoded_file_path = if let (Some(stem), Some(_ext)) = (stem, ext) {
+        let mut transcoded_file_name = stem.to_os_string();
+        transcoded_file_name.push("_480p.mp4");
+        preview_cache_dir.join(transcoded_file_name)
+    } else {
+        log::warn!("Could not construct _480p filename for: {}", clean_path);
+        return HttpResponse::NotFound().body("Invalid video path");
+    };
+
+    log::info!("Looking for transcoded video file in preview cache: {}", transcoded_file_path.display());
+
+    if !transcoded_file_path.exists() {
+        log::warn!("Transcoded video file not found: {}", transcoded_file_path.display());
+        return HttpResponse::NotFound().body("Transcoded video file not found");
+    }
+
+    match std::fs::File::open(&transcoded_file_path) {
+        Ok(mut file) => {
+            let mut buf = Vec::new();
+            if std::io::Read::read_to_end(&mut file, &mut buf).is_ok() {
+                return HttpResponse::Ok()
+                    .content_type("video/mp4")
+                    .append_header(("Cache-Control", "public, max-age=3600"))
+                    .body(buf);
+            }
+        }
+        Err(e) => {
+            log::error!("Failed to open transcoded video file: {}", e);
+        }
+    }
+    HttpResponse::InternalServerError().body("Failed to read transcoded video")
+}

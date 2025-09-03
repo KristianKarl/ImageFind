@@ -39,6 +39,10 @@ pub struct CliArgs {
     #[arg(long, required = true)]
     pub full_image_cache: String,
 
+    /// Path to the video preview cache directory
+    #[arg(long, required = true)]
+    pub video_preview_cache: String,
+
     /// Directory to scan for XMP sidecar files
     #[arg(long, required = true)]
     pub scan_dir: String,
@@ -46,6 +50,10 @@ pub struct CliArgs {
     /// Set the logging level
     #[arg(long, value_enum, default_value = "info")]
     pub log_level: LogLevel,
+
+    /// Port for the webserver (default: 8080)
+    #[arg(long, default_value_t = 8080)]
+    pub port: u16,
 }
 
 pub static CLI_ARGS: OnceLock<CliArgs> = OnceLock::new();

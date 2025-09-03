@@ -6,12 +6,12 @@ The project is created mainly by prompting/Github Copilot using Visual Code.
 
 ## Use case
 
-As a user you want to be able to search and view you personal collection of images.
-* Your collection of images that is managed by [Digikam](https://www.digikam.org/)
+As a user you want to be able to search and view your personal collection of images and videos.
+* Your collection is managed by [Digikam](https://www.digikam.org/)
 * [sidecars](https://docs.digikam.org/en/setup_application/metadata_settings.html#sidecars-settings) are enabled, so xmp sidecar files are created for every image.
-* The collection is on disk some local machine on you LAN.
+* The collection is on disk on some local machine on your LAN.
 
-This tool will enable you to quickly find and view any image in your collection.
+This tool will enable you to quickly find and view any image or video in your collection.
 
 ## Features
 
@@ -19,7 +19,10 @@ This tool will enable you to quickly find and view any image in your collection.
 - Search via UI or JSON API with simple AND support
 - On-demand thumbnail generation and cached full-size image previews
 - Keyboard-friendly modal with navigation and rotation (images)
+- Video preview and playback in modal using HTML5 `<video>` element
+- Video preview uses pre-transcoded files from a dedicated cache directory
 - Basic path security checks
+- Configurable webserver port via CLI
 
 ## Getting Started
 
@@ -29,9 +32,9 @@ This tool will enable you to quickly find and view any image in your collection.
   ```
 - Run:
   ```
-  cargo run -- --scan-dir /path/to/library --db-path /path/to/index.sqlite
+  cargo run -- --scan-dir /path/to/library --db-path /path/to/index.sqlite --thumbnail-cache /path/to/thumb_cache --full-image-cache /path/to/full_cache --video_preview-cache /path/to/video_preview_cache [--port 8080]
   ```
-- The server listens on http://0.0.0.0:8080
+- The server listens on http://0.0.0.0:8080 by default (use `--port` to change).
 
 ### If you are on Nixos
 
@@ -43,15 +46,15 @@ This tool will enable you to quickly find and view any image in your collection.
 
 ### Usage
 
-To be able to create thumbnails from videos, ffmpeg needs to be installed.
+To be able to create thumbnails and previews from videos, ffmpeg needs to be installed (for manual transcoding).
 
 ```
-imagefind --scan-dir <DIR> --db-path <FILE>
+imagefind --scan-dir <DIR> --db-path <FILE> --thumbnail-cache <DIR> --full-image-cache <DIR> --video_preview-cache <DIR> [--port <PORT>]
 ```
 
-- Both arguments are required.
+- All arguments except `--port` are required.
 - ImageFind needs to run from the machine where the collection is on.
-- The firewall on the machine needs to be opened for port `8080`.
+- The firewall on the machine needs to be opened for the chosen port.
 
 ### CLI Arguments
 
@@ -61,12 +64,16 @@ imagefind --scan-dir <DIR> --db-path <FILE>
 - --db-path <FILE> (required)
   - Path to the SQLite database used to store the index.
   - Example: --db-path /var/lib/imagefind/index.sqlite
-- --thumbnail-cache <DIR> (optional)
-  - Directory to store generated thumbnails. Defaults to `thumbnail_cache`.
-- --full-image-cache <DIR> (optional)
-  - Directory to store full-size image previews. Defaults to `full_image_cache`.
+- --thumbnail-cache <DIR> (required)
+  - Directory to store generated thumbnails.
+- --full-image-cache <DIR> (required)
+  - Directory to store full-size image previews.
+- --video_preview-cache <DIR> (required)
+  - Directory to store pre-transcoded video previews (`_480p.mp4` files).
 - --log-level <LEVEL> (optional)
   - Set the logging level (e.g., info, debug, trace). Defaults to `info`.
+- --port <PORT> (optional)
+  - Port for the webserver. Defaults to `8080`.
 
 Optional (provided by clap)
 - -h, --help
@@ -115,8 +122,21 @@ Once indexing is complete, the Actix Web server starts and listens for requests.
 - **Thumbnail Generation**: The search results page loads asynchronously, with each result item making a request to `/thumbnail/{path}`. The server checks a local cache (`thumbnail_cache/`) for an existing thumbnail. If not found, it generates a new thumbnail from the media file, saves it to the cache, and returns it as a Base64-encoded string in a JSON response.
 - **Image and Video Previews**: Clicking a result in the UI opens a modal preview.
   - For images, a request is made to `/image/{path}`. The server generates and caches a full-size JPEG preview in `full_image_cache/`, serving it with an `image/jpeg` content type.
-  - For videos, a request to `/video/{path}` serves the raw video file, which is then rendered by the browser's native `<video>` player.
-- **Caching**: Both thumbnail and full-image preview generation are computationally intensive. The disk-based caches at `--thumbnail-cache` and `--full-image-cache` significantly improve performance on subsequent requests for the same media. A cache-busting parameter (`?t=timestamp`) can be added to image URLs to force regeneration.
+  - For videos, a request to `/video/{path}` serves a pre-transcoded video file (`_480p.mp4`) from the `video_preview_cache` directory for browser playback. The browser's native `<video>` player is used for playback in the modal.
+- **Caching**: Both thumbnail and full-image preview generation are computationally intensive. The disk-based caches at `--thumbnail-cache`, `--full-image-cache`, and `--video_preview-cache` significantly improve performance on subsequent requests for the same media. A cache-busting parameter (`?t=timestamp`) can be added to image URLs to force regeneration.
+
+## Video Preview Logic
+
+- When a video is requested for preview, the backend looks for a file with `_480p.mp4` appended to the basename (e.g., `video.mp4` → `video_480p.mp4`) in the `video_preview_cache` directory.
+- If the `_480p.mp4` file exists, it is served as the video preview.
+- If not, a 404 is returned and no transcoding is performed automatically.
+- You must manually transcode videos to this format and place them in the cache directory.
+
+Example ffmpeg command to create a compatible preview file:
+```
+ffmpeg -i input.mp4 -vf "scale=-2:480" -c:v libx264 -preset fast -profile:v main -pix_fmt yuv420p -b:v 1M -r 25 output_480p.mp4
+```
+Then move `output_480p.mp4` to your `video_preview_cache` directory.
 
 ## Endpoints
 
@@ -131,7 +151,7 @@ Once indexing is complete, the Actix Web server starts and listens for requests.
 - GET /image/{path}
   - image/jpeg preview (cached). Supports cache-busting param t.
 - GET /video/{path}
-  - Serves the video with best-guess Content-Type.
+  - Serves a pre-transcoded video preview (`_480p.mp4` file from cache).
 - GET /health_check
   - Returns “Healthy”.
 
@@ -147,6 +167,9 @@ Once indexing is complete, the Actix Web server starts and listens for requests.
 
 - Media-serving routes apply basic path traversal prevention.
 - Ensure the process can read the media files you reference.
+- Video previews require manual transcoding to `_480p.mp4` files and placement in the cache directory.
+
+- Closing the modal window stops video playback and audio.
 
 ## Troubleshooting
 
@@ -157,11 +180,15 @@ Once indexing is complete, the Actix Web server starts and listens for requests.
   - Force refresh: /image/{path}?t=1690000000000
 - No results
   - Confirm --scan-dir contains .xmp files and DB path is writable.
+- Video preview not working
+  - Ensure the `_480p.mp4` file exists in the `video_preview_cache` directory.
+  - Check that the requested path is absolute and matches the file on disk.
 
 ## Todo
 
-- Configurable port number for the webserver.
-- Preview rendering of videos
+- More robust video format support and fallback.
+- Improved error handling for video preview.
+- Optionally add auto-transcoding as a background task.
 
 ## License
 

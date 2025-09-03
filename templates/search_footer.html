@@ -1,4 +1,4 @@
-    </div>
+</div>
     
     <!-- Modal for image preview -->
     <div id="imageModal" class="modal">
@@ -11,11 +11,13 @@
             </div>
             <button class="modal-nav modal-nav-left" id="modalPrev" onclick="navigateModal(-1)">‹</button>
             <button class="modal-nav modal-nav-right" id="modalNext" onclick="navigateModal(1)">›</button>
-            <div class="modal-image-container"><img id="modalImage" class="modal-image" src="" alt="" style="display:block; object-fit:contain;" /></div>
+            <div class="modal-image-container">
+                <img id="modalImage" class="modal-image" src="" alt="" style="display:block; object-fit:contain;" />
+                <video id="modalVideo" style="display:none; max-width:100%; max-height:100%;" controls></video>
+            </div>
             <div id="modalInfo" class="modal-info"></div>
         </div>
     </div>
-    
     <script>
         // Global variables for modal navigation
         let currentImages = [];
@@ -42,6 +44,13 @@
             });
         }
         
+        // Helper to detect video files by extension
+        function isVideoFile(path) {
+            const videoExts = ['mp4','avi','mov','wmv','flv','webm','mkv','m4v','3gp','ogv'];
+            const ext = path.split('.').pop().toLowerCase();
+            return videoExts.includes(ext);
+        }
+
         function openModal(imagePath, description) {
             // Collect current images if not already done
             if (currentImages.length === 0) {
@@ -54,9 +63,10 @@
             
             // Reset rotation when opening a new modal
             currentRotation = 0;
-            
+
             const modal = document.getElementById('imageModal');
             const modalImage = document.getElementById('modalImage');
+            const modalVideo = document.getElementById('modalVideo');
             const modalInfo = document.getElementById('modalInfo');
             const modalCounter = document.getElementById('modalCounter');
             const modalPrev = document.getElementById('modalPrev');
@@ -67,24 +77,44 @@
             modalPrev.disabled = currentImageIndex === 0;
             modalNext.disabled = currentImageIndex === currentImages.length - 1;
             
-            // Show loading state
-            modalImage.src = '';
+            // Hide both image and video initially
             modalImage.style.display = 'none';
-            modalImage.style.transform = 'rotate(0deg)'; // Reset rotation transform
-            modalInfo.innerHTML = '<div style="text-align: center; padding: 40px; color: #666; font-size: 16px;"><div style="margin-bottom: 10px;">🔄</div>Loading preview...</div>';
-            
+            modalVideo.style.display = 'none';
+            modalImage.style.transform = 'rotate(0deg)';
+
             // Show the modal immediately with loading state
             modal.style.display = 'block';
             document.body.style.overflow = 'hidden';
-            
-            // Load the image
+
+            // Load the image or video
             loadModalImage(imagePath, description);
         }
         
         function loadModalImage(imagePath, description) {
             const modalImage = document.getElementById('modalImage');
+            const modalVideo = document.getElementById('modalVideo');
             const modalInfo = document.getElementById('modalInfo');
             const modalContent = document.getElementById('modalContent');
+
+            if (isVideoFile(imagePath)) {
+                // Remove /image/ prefix if present
+                let videoPath = imagePath.startsWith('/image/') ? imagePath.substring(7) : imagePath;
+                // Ensure absolute path (with leading slash)
+                if (!videoPath.startsWith('/')) {
+                    videoPath = '/' + videoPath;
+                }
+                // Final path: /video//home/krikar/data/fast/Pictures/2025/2025-03-15/2025-03-15_130158.mp4
+                modalVideo.src = '/video' + videoPath;
+                modalVideo.style.display = 'block';
+                modalImage.style.display = 'none';
+                modalInfo.innerHTML = description;
+                modalVideo.currentTime = 0;
+                modalVideo.load();
+                modalVideo.style.transform = 'rotate(0deg)'; // Reset rotation
+                modalContent.style.width = '800px';
+                modalContent.style.height = '600px';
+                return;
+            }
 
             // Function to fetch error details from server
             async function getErrorDetails(url) {
@@ -205,83 +235,91 @@
             
             // Show loading state immediately for navigation
             const modalImage = document.getElementById('modalImage');
+            const modalVideo = document.getElementById('modalVideo');
             const modalInfo = document.getElementById('modalInfo');
             
             // Hide current image and show loading message
             modalImage.src = '';
             modalImage.style.display = 'none';
             modalImage.style.transform = 'rotate(0deg)'; // Reset rotation transform
+            modalVideo.src = '';
+            modalVideo.style.display = 'none';
             modalInfo.innerHTML = '<div style="text-align: center; padding: 40px; color: #666; font-size: 16px;"><div style="margin-bottom: 10px;">🔄</div>Image being converted...</div>';
             
             // Load the new image
             loadModalImage(currentImage.path, currentImage.description);
         }
         
-        // Function to rotate the current image
+        // Function to rotate the current image or video
         function rotateImage(degrees) {
             const modal = document.getElementById('imageModal');
-            if (modal.style.display !== 'block') return; // Only rotate if modal is open
-
             const modalImage = document.getElementById('modalImage');
-            if (modalImage.style.display === 'none') return; // Only rotate if image is loaded
-
-            // Update rotation state
-            currentRotation = (currentRotation + degrees) % 360;
-            if (currentRotation < 0) currentRotation += 360;
-
-            // Apply rotation transform
-            modalImage.style.transform = `rotate(${currentRotation}deg)`;
-            modalImage.style.transition = 'transform 0.3s ease';
-
-            // Dynamically resize modal and image for new orientation
-            // Get natural size from loaded image
-            const img = new window.Image();
-            img.src = modalImage.src;
-            img.onload = function() {
-                // Use same helper as in loadModalImage
-                const modalContent = document.getElementById('modalContent');
-                function resizeModalForImage(naturalWidth, naturalHeight, rotation) {
-                    let imgW = naturalWidth;
-                    let imgH = naturalHeight;
-                    if (rotation % 180 === 90) {
-                        [imgW, imgH] = [imgH, imgW];
+            const modalVideo = document.getElementById('modalVideo');
+            // Only rotate if modal is open and image or video is displayed
+            if (modal.style.display !== 'block') return;
+            if (modalImage.style.display === 'block') {
+                // Rotate image
+                currentRotation = (currentRotation + degrees) % 360;
+                if (currentRotation < 0) currentRotation += 360;
+                modalImage.style.transform = `rotate(${currentRotation}deg)`;
+                modalImage.style.transition = 'transform 0.3s ease';
+                // Dynamically resize modal and image for new orientation
+                // Get natural size from loaded image
+                const img = new window.Image();
+                img.src = modalImage.src;
+                img.onload = function() {
+                    // Use same helper as in loadModalImage
+                    const modalContent = document.getElementById('modalContent');
+                    function resizeModalForImage(naturalWidth, naturalHeight, rotation) {
+                        let imgW = naturalWidth;
+                        let imgH = naturalHeight;
+                        if (rotation % 180 === 90) {
+                            [imgW, imgH] = [imgH, imgW];
+                        }
+                        const maxW = window.innerWidth * 0.9;
+                        const maxH = window.innerHeight * 0.9;
+                        let scale = Math.min(maxW / imgW, (maxH) / (imgH + 60), 1);
+                        const modalW = Math.round(imgW * scale);
+                        const modalH = Math.round(imgH * scale + 60);
+                        modalContent.style.width = modalW + 'px';
+                        modalContent.style.height = modalH + 'px';
+                        modalImage.style.maxWidth = (rotation % 180 === 90) ? (maxH - 60) + 'px' : maxW + 'px';
+                        modalImage.style.maxHeight = (rotation % 180 === 90) ? maxW + 'px' : (maxH - 60) + 'px';
                     }
-                    const maxW = window.innerWidth * 0.9;
-                    const maxH = window.innerHeight * 0.9;
-                    let scale = Math.min(maxW / imgW, (maxH) / (imgH + 60), 1);
-                    const modalW = Math.round(imgW * scale);
-                    const modalH = Math.round(imgH * scale + 60);
-                    modalContent.style.width = modalW + 'px';
-                    modalContent.style.height = modalH + 'px';
-                    modalImage.style.maxWidth = (rotation % 180 === 90) ? (maxH - 60) + 'px' : maxW + 'px';
-                    modalImage.style.maxHeight = (rotation % 180 === 90) ? maxW + 'px' : (maxH - 60) + 'px';
-                }
-                resizeModalForImage(img.naturalWidth, img.naturalHeight, currentRotation);
-            };
+                    resizeModalForImage(img.naturalWidth, img.naturalHeight, currentRotation);
+                };
 
-            // If image is already loaded, onload may not fire, so call directly if possible
-            if (modalImage.naturalWidth && modalImage.naturalHeight) {
-                const modalContent = document.getElementById('modalContent');
-                function resizeModalForImage(naturalWidth, naturalHeight, rotation) {
-                    let imgW = naturalWidth;
-                    let imgH = naturalHeight;
-                    if (rotation % 180 === 90) {
-                        [imgW, imgH] = [imgH, imgW];
+                // If image is already loaded, onload may not fire, so call directly if possible
+                if (modalImage.naturalWidth && modalImage.naturalHeight) {
+                    const modalContent = document.getElementById('modalContent');
+                    function resizeModalForImage(naturalWidth, naturalHeight, rotation) {
+                        let imgW = naturalWidth;
+                        let imgH = naturalHeight;
+                        if (rotation % 180 === 90) {
+                            [imgW, imgH] = [imgH, imgW];
+                        }
+                        const maxW = window.innerWidth * 0.9;
+                        const maxH = window.innerHeight * 0.9;
+                        let scale = Math.min(maxW / imgW, (maxH) / (imgH + 60), 1);
+                        const modalW = Math.round(imgW * scale);
+                        const modalH = Math.round(imgH * scale + 60);
+                        modalContent.style.width = modalW + 'px';
+                        modalContent.style.height = modalH + 'px';
+                        modalImage.style.maxWidth = (rotation % 180 === 90) ? (maxH - 60) + 'px' : maxW + 'px';
+                        modalImage.style.maxHeight = (rotation % 180 === 90) ? maxW + 'px' : (maxH - 60) + 'px';
                     }
-                    const maxW = window.innerWidth * 0.9;
-                    const maxH = window.innerHeight * 0.9;
-                    let scale = Math.min(maxW / imgW, (maxH) / (imgH + 60), 1);
-                    const modalW = Math.round(imgW * scale);
-                    const modalH = Math.round(imgH * scale + 60);
-                    modalContent.style.width = modalW + 'px';
-                    modalContent.style.height = modalH + 'px';
-                    modalImage.style.maxWidth = (rotation % 180 === 90) ? (maxH - 60) + 'px' : maxW + 'px';
-                    modalImage.style.maxHeight = (rotation % 180 === 90) ? maxW + 'px' : (maxH - 60) + 'px';
+                    resizeModalForImage(modalImage.naturalWidth, modalImage.naturalHeight, currentRotation);
                 }
-                resizeModalForImage(modalImage.naturalWidth, modalImage.naturalHeight, currentRotation);
+
+                console.log(`Rotated image to ${currentRotation} degrees`);
+            } else if (modalVideo.style.display === 'block') {
+                // Rotate video
+                currentRotation = (currentRotation + degrees) % 360;
+                if (currentRotation < 0) currentRotation += 360;
+                modalVideo.style.transform = `rotate(${currentRotation}deg)`;
+                modalVideo.style.transition = 'transform 0.3s ease';
+                // Optionally adjust modal size for rotated video if needed
             }
-
-            console.log(`Rotated image to ${currentRotation} degrees`);
         }
         
         function updateModalCounter() {
@@ -299,6 +337,12 @@
             // Clear the image source to prevent caching issues
             const modalImage = document.getElementById('modalImage');
             modalImage.src = '';
+
+            // Stop video playback and clear video source
+            const modalVideo = document.getElementById('modalVideo');
+            modalVideo.pause();
+            modalVideo.src = '';
+            modalVideo.style.transform = 'rotate(0deg)'; // Reset rotation
         }
         
         // Close modal when clicking outside the image
@@ -428,4 +472,4 @@
         });
     </script>
 </body>
-</html> 
+</html>

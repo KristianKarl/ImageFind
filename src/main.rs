@@ -17,6 +17,8 @@ async fn main() -> std::io::Result<()> {
         eprintln!("Error importing sidecars: {}", e);
     }
 
+    let port = cli::CLI_ARGS.get().unwrap().port;
+
     HttpServer::new(|| {
         App::new()
             .route("/", web::get().to(routes::index))
@@ -25,8 +27,9 @@ async fn main() -> std::io::Result<()> {
             .route("/api", web::get().to(routes::api_search))
             .route("/image/{path:.*}", web::get().to(routes::serve_image))
             .route("/thumbnail/{path:.*}", web::get().to(routes::get_thumbnail))
+            .route("/video/{path:.*}", web::get().to(routes::serve_video))
     })
-    .bind("0.0.0.0:8080")?
+    .bind(("0.0.0.0", port))?
     .run()
     .await
 }
