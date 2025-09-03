@@ -56,6 +56,29 @@ imagefind --scan-dir <DIR> --db-path <FILE> --thumbnail-cache <DIR> --full-image
 - ImageFind needs to run from the machine where the collection is on.
 - The firewall on the machine needs to be opened for the chosen port.
 
+### Pre-rendering of videos
+
+There's a utility [bash script](utils/transcodePreviewVideos.sh) that should be run ahead of time to render smaller and normalized versions of the original videos.
+
+Usage:
+
+  `./transcodePreviewVideos.sh [scan_folder] [target_folder] [num_jobs]`
+
+Arguments:
+- scan_folder
+  - Optional. Path to the folder to scan for video files. Defaults to current directory.
+- target_folder
+  - Optional. Path to the folder where transcoded videos will be saved. Defaults to scan folder. This is the same folder that `ImageFind` argument the `--video_preview-cache` should hold.
+- num_jobs
+  - Optional. Number of parallel transcoding jobs. Defaults to 5.
+
+Output:
+- Creates new files with _480p.mp4 suffix for each transcoded video in the target folder.
+- Skips transcoding if the output file already exists in the target folder.
+
+Example:
+  `./transcodePreviewVideos.sh ~/Pictures/ ~/img_service/video_preview_cache/`
+
 ### CLI Arguments
 
 - --scan-dir <DIR> (required)
