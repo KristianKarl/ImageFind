@@ -540,126 +540,18 @@ pub async fn serve_image(path: web::Path<String>, query: web::Query<HashMap<Stri
                     }
                 }
                 
-                // Process image file with better error handling
-                match image::load_from_memory(&image_data) {
-                    Ok(img) => {
-                        // Get original dimensions
-                        let (original_width, original_height) = (img.width(), img.height());
-                        log::debug!("Original image dimensions: {}x{}", original_width, original_height);
-                        
-                        // Check for problematic image dimensions
-                        if original_width == 0 || original_height == 0 {
-                            return Err("Invalid image dimensions".to_string());
-                        }
-                        
-                        // Check for extremely large images that might cause memory issues
-                        if original_width > 50000 || original_height > 50000 {
-                            return Err("Image too large to process safely".to_string());
-                        }
-                        
-                        // Convert to RGB if needed (some JPGs have issues with other color spaces)
-                        let img_rgb = match img.color() {
-                            image::ColorType::Rgb8 | image::ColorType::Rgba8 => img,
-                            _ => {
-                                // Convert to RGB for consistent processing
-                                img.to_rgb8().into()
-                            }
-                        };
-                        
-                        // Early check: if image is already small enough, just rotate and convert
-                        if original_width <= 1980 && original_height <= 1980 {
-                            // Small image: convert to JPEG
-                            let mut jpeg_bytes = Vec::new();
-                            match img_rgb.write_with_encoder(
-                                image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg_bytes, 50)
-                            ) {
-                                Ok(_) => {
-                                    let _ = save_full_image_to_cache(&cache_key, &jpeg_bytes);
-                                    return Ok(jpeg_bytes);
-                                }
-                                Err(e) => {
-                                    return Err(format!("JPEG encoding failed for small image: {:?}", e));
-                                }
-                            }
-                        }
-                        
-                        // Large image: optimize scaling strategy with error handling
-                        let scaled_img = if original_width > 3960 || original_height > 3960 {
-                            // Very large image: use progressive scaling for better performance
-                            // First scale to intermediate size using faster algorithm
-                            let intermediate_size = 3960;
-                            let intermediate = img_rgb.resize(
-                                intermediate_size, 
-                                intermediate_size, 
-                                image::imageops::FilterType::Triangle // Faster than Lanczos3
-                            );
-                            
-                            // Then final scale to target size with high quality
-                            intermediate.resize(
-                                1980, 
-                                1980, 
-                                image::imageops::FilterType::Lanczos3
-                            )
-                        } else {
-                            // Moderately large image: direct scaling with faster algorithm
-                            img_rgb.resize(
-                                1980, 
-                                1980, 
-                                image::imageops::FilterType::CatmullRom // Good quality, faster than Lanczos3
-                            )
-                        };
-                        
-                        // Convert to JPEG format with error handling
-                        let mut jpeg_bytes = Vec::new();
-                        match scaled_img.write_with_encoder(
-                            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg_bytes, 50)
-                        ) {
-                            Ok(_) => {
-                                log::debug!("Successfully encoded JPEG, size: {} bytes", jpeg_bytes.len());
-                                // Save to cache for next time
-                                let _ = save_full_image_to_cache(&cache_key, &jpeg_bytes);
-                                Ok(jpeg_bytes)
-                            }
-                            Err(e) => {
-                                log::error!("JPEG encoding failed: {:?}", e);
-                                Err(format!("JPEG encoding failed: {:?}", e))
-                            }
-                        }
+
+                match image_path_for_closure.split('.').last().unwrap_or("").to_lowercase().as_str() {
+                    "jpg" | "jpeg" | "png" | "gif" | "bmp" | "webp" => {
+                        generate_external_preview(&image_path_for_closure, &cache_key)
                     }
-                    Err(e) => {
-                        log::warn!("Standard image loading failed for {}: {:?}", image_path_for_closure, e);
-                        // More specific error handling for image loading
-                        match e {
-                            image::ImageError::Limits(_) => Err("Image exceeds size limits".to_string()),
-                            image::ImageError::Unsupported(_) => {
-                                // For RAW files, use rawloader
-                                
-                                if is_raw {
-                                    log::info!("Trying rawloader for RAW preview: {}", image_path_for_closure);
-                                    return generate_raw_preview(&image_path_for_closure, &cache_key);
-                                } else {
-                                    Err("Unsupported image format".to_string())
-                                }
-                            }
-                            image::ImageError::IoError(_) => Err("IO error reading image".to_string()),
-                            _ => {
-                                // For other errors, try external tools for common formats
-                                log::warn!("Image processing error for preview {}, trying external tools: {:?}", image_path_for_closure, e);
-                                match image_path_for_closure.split('.').last().unwrap_or("").to_lowercase().as_str() {
-                                    "jpg" | "jpeg" | "png" | "gif" | "bmp" | "webp" => {
-                                        generate_external_preview(&image_path_for_closure, &cache_key)
-                                    }
-                                    _ => {
-                                        // If image processing fails completely, try to return original as fallback
-                                        // but only for smaller files to avoid memory issues
-                                        if image_data.len() < 50_000_000 { // 50MB limit
-                                            Ok(image_data)
-                                        } else {
-                                            Err("Image too large and processing failed".to_string())
-                                        }
-                                    }
-                                }
-                            }
+                    _ => {
+                        // If image processing fails completely, try to return original as fallback
+                        // but only for smaller files to avoid memory issues
+                        if image_data.len() < 50_000_000 { // 50MB limit
+                            Ok(image_data)
+                        } else {
+                            Err("Image too large and processing failed".to_string())
                         }
                     }
                 }
