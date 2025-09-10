@@ -109,7 +109,7 @@ pub fn convert_tiff_to_rgb_jpeg(
             log::debug!("TIFF color type: {:?}", color_type);
 
             let rgb_data: Vec<u8> = match color_type {
-                tiff::ColorType::Gray(nbits) => {
+                tiff::ColorType::Gray(_nbits) => {
                     log::info!("TIFF is 16-bit greyscale, converting to 8-bit RGB");
                     // Convert grayscale to RGB by duplicating each value
                     data.iter().flat_map(|x| {
