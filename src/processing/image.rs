@@ -298,12 +298,8 @@ pub fn process_preview_with_image_crate(file_path: &str, cache_key: &str) -> Res
             log::debug!("Preview processing - original dimensions: {}x{}", original_width, original_height);
             
             let max_dimension = 1980u32;
-            // Rotate first, then scale to fit box (never crop, always fit)
-            log::trace!("Rotating image 90 degrees");
-            let rotated_img = img.rotate90();
-            
             log::trace!("Scaling image to fit {}x{}", max_dimension, max_dimension);
-            let scaled_img = rotated_img.thumbnail(max_dimension, max_dimension);
+            let scaled_img = img.thumbnail(max_dimension, max_dimension);
             
             let mut jpeg_bytes = Vec::new();
             match scaled_img.write_with_encoder(
