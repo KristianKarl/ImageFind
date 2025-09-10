@@ -10,9 +10,11 @@ services:
       - db:/db
       - img-cache:/full-image-cache
       - thumbs-cache:/thumbnail-cache
+      - video-preview-cache:/video-preview-cache
     restart: unless-stopped
 volumes:
   db:
   img-cache:
   thumbs-cache:
+  video-preview-cache:
 

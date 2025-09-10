@@ -15,9 +15,10 @@ target/
 .vscode/
 .idea
 
-# cache
+# cache and test files
 thumbnail_cache/
 full_image_cache/
+images/
 
 # log files
 *.log
