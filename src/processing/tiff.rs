@@ -54,6 +54,24 @@ pub fn convert_tiff_to_rgb_jpeg(
                 tiff::ColorType::RGB(_) => {
                     data
                 }
+                tiff::ColorType::YCbCr(_) => {
+                    log::info!("TIFF is YCbCr, converting to RGB");
+                    let mut rgb_data = Vec::with_capacity(data.len());
+                    for chunk in data.chunks_exact(3) {
+                        let y = chunk[0] as f32;
+                        let cb = chunk[1] as f32 - 128.0;
+                        let cr = chunk[2] as f32 - 128.0;
+
+                        let r = (y + 1.402 * cr).clamp(0.0, 255.0) as u8;
+                        let g = (y - 0.344136 * cb - 0.714136 * cr).clamp(0.0, 255.0) as u8;
+                        let b = (y + 1.772 * cb).clamp(0.0, 255.0) as u8;
+
+                        rgb_data.push(r);
+                        rgb_data.push(g);
+                        rgb_data.push(b);
+                    }
+                    rgb_data
+                }
                 _ => {
                     log::warn!("TIFF color type not handled: {:?}", color_type);
                     data
@@ -119,6 +137,24 @@ pub fn convert_tiff_to_rgb_jpeg(
                 }
                 tiff::ColorType::RGB(_) => {
                     data.iter().map(|&x| (x >> 8) as u8).collect()
+                }
+                tiff::ColorType::YCbCr(_) => {
+                    log::info!("TIFF is 16-bit YCbCr, converting to RGB");
+                    let mut rgb_data = Vec::with_capacity(data.len());
+                    for chunk in data.chunks_exact(3) {
+                        let y = (chunk[0] >> 8) as f32;
+                        let cb = (chunk[1] >> 8) as f32 - 128.0;
+                        let cr = (chunk[2] >> 8) as f32 - 128.0;
+
+                        let r = (y + 1.402 * cr).clamp(0.0, 255.0) as u8;
+                        let g = (y - 0.344136 * cb - 0.714136 * cr).clamp(0.0, 255.0) as u8;
+                        let b = (y + 1.772 * cb).clamp(0.0, 255.0) as u8;
+
+                        rgb_data.push(r);
+                        rgb_data.push(g);
+                        rgb_data.push(b);
+                    }
+                    rgb_data
                 }
                 _ => {
                     log::warn!("TIFF color type not handled: {:?}", color_type);
