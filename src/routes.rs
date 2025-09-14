@@ -288,8 +288,9 @@ pub async fn search_page(query: web::Query<IndexQuery>) -> HttpResponse {
         },
     };
 
+    // First, get the matching file IDs
     let mut stmt = match conn.prepare(
-        &format!("SELECT file.path, key_value.value \
+        &format!("SELECT DISTINCT file.id, file.path \
          FROM key_value \
          JOIN file ON key_value.file_id = file.id \
          {} \
@@ -302,22 +303,23 @@ pub async fn search_page(query: web::Query<IndexQuery>) -> HttpResponse {
         },
     };
 
-    let rows = stmt
+    let file_rows = stmt
         .query_map(rusqlite::params_from_iter(parameters.iter()), |row| {
-            let file_path: String = row.get(0)?;
-            let value: String = row.get(1)?;
-            // Remove ".xmp" suffix if present
-            let file_path = file_path.strip_suffix(".xmp").unwrap_or(&file_path).to_string();
-            
-            Ok((file_path, value))
+            let file_id: i64 = row.get(0)?;
+            let file_path: String = row.get(1)?;
+            Ok((file_id, file_path))
         });
 
-    let mut results = Vec::new();
-    match rows {
+    let mut file_results = Vec::new();
+    match file_rows {
         Ok(mapped) => {
             for row in mapped {
                 match row {
-                    Ok((file_path, value)) => results.push((file_path, value, None::<String>)),
+                    Ok((file_id, file_path)) => {
+                        // Remove ".xmp" suffix if present
+                        let clean_path = file_path.strip_suffix(".xmp").unwrap_or(&file_path).to_string();
+                        file_results.push((file_id, clean_path));
+                    },
                     Err(e) => {
                         log::error!("Row processing error in search: {}", e);
                         return HttpResponse::InternalServerError().body(format!("Row error: {}", e));
@@ -331,16 +333,51 @@ pub async fn search_page(query: web::Query<IndexQuery>) -> HttpResponse {
         },
     }
 
-    // Deduplicate results by file_path
-    let mut seen = std::collections::HashSet::new();
-    let mut unique_results = Vec::new();
-    for (file_path, value, thumb) in results {
-        if seen.insert(file_path.clone()) {
-            unique_results.push((file_path, value, thumb));
-        }
-    }
+    log::info!("Search page found {} unique files", file_results.len());
 
-    log::info!("Search page completed, found {} unique results", unique_results.len());
+    // Now get all metadata for each file
+    let mut results_with_metadata = Vec::new();
+    for (file_id, file_path) in file_results {
+        // Get all metadata values for this file
+        let mut metadata_stmt = match conn.prepare(
+            "SELECT value FROM key_value WHERE file_id = ?1 ORDER BY key"
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to prepare metadata query: {}", e);
+                continue;
+            }
+        };
+
+        let metadata_rows = metadata_stmt.query_map(rusqlite::params![file_id], |row| {
+            let value: String = row.get(0)?;
+            Ok(value)
+        });
+
+        let mut all_metadata = Vec::new();
+        match metadata_rows {
+            Ok(mapped) => {
+                for row in mapped {
+                    match row {
+                        Ok(value) => {
+                            // Skip empty values and very long values that might be binary data
+                            if !value.trim().is_empty() && value.len() < 500 {
+                                all_metadata.push(value);
+                            }
+                        },
+                        Err(e) => {
+                            log::warn!("Error reading metadata value for file_id {}: {}", file_id, e);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("Metadata query error for file_id {}: {}", file_id, e);
+            }
+        }
+
+        results_with_metadata.push((file_path, all_metadata));
+    }
 
     // Generate HTML efficiently
     let mut html_parts = Vec::new();
@@ -348,13 +385,23 @@ pub async fn search_page(query: web::Query<IndexQuery>) -> HttpResponse {
     // HTML header
     html_parts.push(include_str!("../templates/search_header.html").to_string());
 
-    // Generate result items with placeholder thumbnails
-    for (file_path, value, _) in unique_results {
+    // Generate result items with placeholder thumbnails and all metadata
+    for (file_path, all_metadata) in results_with_metadata {
         let escaped_file_path = html_escape(&file_path);
-        let highlighted_value = highlight_search_terms(&value, search_term);
+        
+        // Create highlighted metadata values
+        let mut highlighted_metadata = Vec::new();
+        for metadata_value in &all_metadata {
+            let highlighted_value = highlight_search_terms(metadata_value, search_term);
+            highlighted_metadata.push(highlighted_value);
+        }
+        
+        // Join all metadata values with line breaks
+        let combined_metadata = highlighted_metadata.join("<br>");
+        
         // Escape for JavaScript (replace single quotes)
         let js_safe_path = file_path.replace('\'', "\\'");
-        let js_safe_value = value.replace('\'', "\\'").replace('\n', "\\n").replace('\r', "");
+        let js_safe_value = all_metadata.join(" ").replace('\'', "\\'").replace('\n', "\\n").replace('\r', "");
         let encoded_path = urlencoding::encode(&file_path);
         
         let item_html = format!(r#"
@@ -371,7 +418,7 @@ pub async fn search_page(query: web::Query<IndexQuery>) -> HttpResponse {
             <div class="file-path">{}</div>
             <div class="value-text">{}</div>
         </div>
-"#, encoded_path, escaped_file_path, js_safe_path, js_safe_value, escaped_file_path, highlighted_value);
+"#, encoded_path, escaped_file_path, js_safe_path, js_safe_value, escaped_file_path, combined_metadata);
         html_parts.push(item_html);
     }
 
