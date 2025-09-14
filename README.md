@@ -141,7 +141,7 @@ When the application starts, it performs a scan of the directory specified by `-
 
 Once indexing is complete, the Actix Web server starts and listens for requests.
 
-- **Search**: The UI (`/search`) and API (`/api`) endpoints accept a `search` query parameter. The query string is split by ` AND ` to support multi-term searches. The application then queries the `key_value` table for files that have metadata values matching all provided terms.
+- **Search**: The UI (`/search`) and API (`/api`) endpoints accept a `search` query parameter. The query string is parsed to support multiple search terms separated by whitespace. Terms containing spaces can be enclosed in double quotes (e.g., `lycke johanna "family vacation"`). The application then queries the `key_value` table for files that have metadata values matching all provided terms (AND logic).
 - **Thumbnail Generation**: The search results page loads asynchronously, with each result item making a request to `/thumbnail/{path}`. The server checks a local cache (`thumbnail_cache/`) for an existing thumbnail. If not found, it generates a new thumbnail from the media file, saves it to the cache, and returns it as a Base64-encoded string in a JSON response.
 - **Image and Video Previews**: Clicking a result in the UI opens a modal preview.
   - For images, a request is made to `/image/{path}`. The server generates and caches a full-size JPEG preview in `full_image_cache/`, serving it with an `image/jpeg` content type.
@@ -181,8 +181,12 @@ Then move `output_480p.mp4` to your `video_preview_cache` directory.
 ### Request-time parameters
 
 - Search query
-  - /search?search=term
-  - AND must be uppercase and separated by spaces (e.g., foo AND bar).
+  - /search?search=term1 term2 "quoted phrase"
+  - Multiple terms are combined with AND logic.
+  - Use double quotes to search for phrases containing spaces.
+  - Examples:
+    - `lycke johanna` - finds files with both "lycke" AND "johanna" in metadata
+    - `"family vacation" summer` - finds files with the phrase "family vacation" AND "summer"
 - Cache busting
   - /image/{path}?t=timestamp forces regeneration/refresh.
 

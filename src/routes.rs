@@ -93,30 +93,84 @@ fn parse_search_query(search_term: &str) -> (String, Vec<String>) {
         return ("WHERE key_value.value LIKE ?1".to_string(), vec![format!("%{}%", search_term)]);
     }
     
-    // Split by AND (case-insensitive) while preserving quoted strings
-    let and_parts: Vec<&str> = search_term
-        .split(" AND ")
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .collect();
+    // Parse search terms, handling quoted strings
+    let terms = parse_search_terms(search_term);
     
-    if and_parts.len() <= 1 {
-        // No AND found, use original single-term logic
+    if terms.is_empty() {
         return ("WHERE key_value.value LIKE ?1".to_string(), vec![format!("%{}%", search_term)]);
+    }
+    
+    if terms.len() == 1 {
+        // Single term, use original single-term logic
+        return ("WHERE key_value.value LIKE ?1".to_string(), vec![format!("%{}%", terms[0])]);
     }
     
     // Build WHERE clause with multiple AND conditions
     let mut where_parts = Vec::new();
     let mut parameters = Vec::new();
     
-    for (i, part) in and_parts.iter().enumerate() {
+    for (i, term) in terms.iter().enumerate() {
         let param_num = i + 1;
         where_parts.push(format!("key_value.value LIKE ?{}", param_num));
-        parameters.push(format!("%{}%", part.trim()));
+        parameters.push(format!("%{}%", term.trim()));
     }
     
     let where_clause = format!("WHERE {}", where_parts.join(" AND "));
     (where_clause, parameters)
+}
+
+// Function to parse search terms, handling quoted strings and whitespace splitting
+fn parse_search_terms(input: &str) -> Vec<String> {
+    let mut terms = Vec::new();
+    let mut current_term = String::new();
+    let mut in_quotes = false;
+    let mut chars = input.chars().peekable();
+    
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => {
+                if in_quotes {
+                    // End of quoted string
+                    if !current_term.trim().is_empty() {
+                        terms.push(current_term.trim().to_string());
+                        current_term.clear();
+                    }
+                    in_quotes = false;
+                } else {
+                    // Start of quoted string
+                    // If we have accumulated non-quoted content, save it first
+                    if !current_term.trim().is_empty() {
+                        terms.push(current_term.trim().to_string());
+                        current_term.clear();
+                    }
+                    in_quotes = true;
+                }
+            }
+            ' ' | '\t' | '\n' | '\r' => {
+                if in_quotes {
+                    // Inside quotes, preserve whitespace
+                    current_term.push(ch);
+                } else {
+                    // Outside quotes, whitespace is a separator
+                    if !current_term.trim().is_empty() {
+                        terms.push(current_term.trim().to_string());
+                        current_term.clear();
+                    }
+                }
+            }
+            _ => {
+                current_term.push(ch);
+            }
+        }
+    }
+    
+    // Add any remaining term
+    if !current_term.trim().is_empty() {
+        terms.push(current_term.trim().to_string());
+    }
+    
+    // Filter out empty terms
+    terms.into_iter().filter(|t| !t.is_empty()).collect()
 }
 
 pub async fn index(query: web::Query<IndexQuery>) -> HttpResponse {
