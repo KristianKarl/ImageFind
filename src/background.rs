@@ -1,4 +1,4 @@
-use std::sync::{Arc, atomic::Ordering};
+use std::sync::{atomic::Ordering};
 use std::thread;
 use std::time::Duration;
 use rusqlite::Connection;
