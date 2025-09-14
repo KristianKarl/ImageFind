@@ -45,19 +45,8 @@ fn highlight_search_terms(text: &str, search_term: &str) -> String {
     // Escape the original text first
     let mut escaped_text = html_escape(text);
     
-    // Extract all search terms (handle AND logic)
-    let and_parts: Vec<&str> = search_term
-        .split(" AND ")
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .collect();
-    
-    // If no AND found, treat as single term
-    let terms_to_highlight = if and_parts.len() <= 1 {
-        vec![search_term]
-    } else {
-        and_parts
-    };
+    // Parse search terms using the same logic as the search query
+    let terms_to_highlight = parse_search_terms(search_term);
     
     // Highlight each term
     for term in terms_to_highlight {
@@ -87,36 +76,94 @@ fn highlight_search_terms(text: &str, search_term: &str) -> String {
     escaped_text
 }
 
-// Function to parse search query and handle AND logic
+// Function to parse search query and handle cross-field search
 fn parse_search_query(search_term: &str) -> (String, Vec<String>) {
     if search_term.trim().is_empty() {
         return ("WHERE key_value.value LIKE ?1".to_string(), vec![format!("%{}%", search_term)]);
     }
     
-    // Split by AND (case-insensitive) while preserving quoted strings
-    let and_parts: Vec<&str> = search_term
-        .split(" AND ")
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .collect();
+    // Parse search terms, handling quoted strings
+    let terms = parse_search_terms(search_term);
     
-    if and_parts.len() <= 1 {
-        // No AND found, use original single-term logic
+    if terms.is_empty() {
         return ("WHERE key_value.value LIKE ?1".to_string(), vec![format!("%{}%", search_term)]);
     }
     
-    // Build WHERE clause with multiple AND conditions
-    let mut where_parts = Vec::new();
-    let mut parameters = Vec::new();
-    
-    for (i, part) in and_parts.iter().enumerate() {
-        let param_num = i + 1;
-        where_parts.push(format!("key_value.value LIKE ?{}", param_num));
-        parameters.push(format!("%{}%", part.trim()));
+    if terms.len() == 1 {
+        // Single term, use original single-term logic
+        return ("WHERE key_value.value LIKE ?1".to_string(), vec![format!("%{}%", terms[0])]);
     }
     
-    let where_clause = format!("WHERE {}", where_parts.join(" AND "));
+    // Build WHERE clause that searches across all metadata fields for each file
+    // Each term must be found in at least one metadata field of the same file
+    let mut where_conditions = Vec::new();
+    let mut parameters = Vec::new();
+    
+    for (i, term) in terms.iter().enumerate() {
+        let param_num = i + 1;
+        where_conditions.push(format!(
+            "file.id IN (SELECT DISTINCT kv{}.file_id FROM key_value kv{} WHERE kv{}.value LIKE ?{})",
+            param_num, param_num, param_num, param_num
+        ));
+        parameters.push(format!("%{}%", term.trim()));
+    }
+    
+    let where_clause = format!("WHERE {}", where_conditions.join(" AND "));
     (where_clause, parameters)
+}
+
+// Function to parse search terms, handling quoted strings and whitespace splitting
+fn parse_search_terms(input: &str) -> Vec<String> {
+    let mut terms = Vec::new();
+    let mut current_term = String::new();
+    let mut in_quotes = false;
+    let mut chars = input.chars().peekable();
+    
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => {
+                if in_quotes {
+                    // End of quoted string
+                    if !current_term.trim().is_empty() {
+                        terms.push(current_term.trim().to_string());
+                        current_term.clear();
+                    }
+                    in_quotes = false;
+                } else {
+                    // Start of quoted string
+                    // If we have accumulated non-quoted content, save it first
+                    if !current_term.trim().is_empty() {
+                        terms.push(current_term.trim().to_string());
+                        current_term.clear();
+                    }
+                    in_quotes = true;
+                }
+            }
+            ' ' | '\t' | '\n' | '\r' => {
+                if in_quotes {
+                    // Inside quotes, preserve whitespace
+                    current_term.push(ch);
+                } else {
+                    // Outside quotes, whitespace is a separator
+                    if !current_term.trim().is_empty() {
+                        terms.push(current_term.trim().to_string());
+                        current_term.clear();
+                    }
+                }
+            }
+            _ => {
+                current_term.push(ch);
+            }
+        }
+    }
+    
+    // Add any remaining term
+    if !current_term.trim().is_empty() {
+        terms.push(current_term.trim().to_string());
+    }
+    
+    // Filter out empty terms
+    terms.into_iter().filter(|t| !t.is_empty()).collect()
 }
 
 pub async fn index(query: web::Query<IndexQuery>) -> HttpResponse {
@@ -241,8 +288,9 @@ pub async fn search_page(query: web::Query<IndexQuery>) -> HttpResponse {
         },
     };
 
+    // First, get the matching file IDs
     let mut stmt = match conn.prepare(
-        &format!("SELECT file.path, key_value.value \
+        &format!("SELECT DISTINCT file.id, file.path \
          FROM key_value \
          JOIN file ON key_value.file_id = file.id \
          {} \
@@ -255,22 +303,23 @@ pub async fn search_page(query: web::Query<IndexQuery>) -> HttpResponse {
         },
     };
 
-    let rows = stmt
+    let file_rows = stmt
         .query_map(rusqlite::params_from_iter(parameters.iter()), |row| {
-            let file_path: String = row.get(0)?;
-            let value: String = row.get(1)?;
-            // Remove ".xmp" suffix if present
-            let file_path = file_path.strip_suffix(".xmp").unwrap_or(&file_path).to_string();
-            
-            Ok((file_path, value))
+            let file_id: i64 = row.get(0)?;
+            let file_path: String = row.get(1)?;
+            Ok((file_id, file_path))
         });
 
-    let mut results = Vec::new();
-    match rows {
+    let mut file_results = Vec::new();
+    match file_rows {
         Ok(mapped) => {
             for row in mapped {
                 match row {
-                    Ok((file_path, value)) => results.push((file_path, value, None::<String>)),
+                    Ok((file_id, file_path)) => {
+                        // Remove ".xmp" suffix if present
+                        let clean_path = file_path.strip_suffix(".xmp").unwrap_or(&file_path).to_string();
+                        file_results.push((file_id, clean_path));
+                    },
                     Err(e) => {
                         log::error!("Row processing error in search: {}", e);
                         return HttpResponse::InternalServerError().body(format!("Row error: {}", e));
@@ -284,30 +333,82 @@ pub async fn search_page(query: web::Query<IndexQuery>) -> HttpResponse {
         },
     }
 
-    // Deduplicate results by file_path
-    let mut seen = std::collections::HashSet::new();
-    let mut unique_results = Vec::new();
-    for (file_path, value, thumb) in results {
-        if seen.insert(file_path.clone()) {
-            unique_results.push((file_path, value, thumb));
-        }
-    }
+    log::info!("Search page found {} unique files", file_results.len());
 
-    log::info!("Search page completed, found {} unique results", unique_results.len());
+    // Now get all metadata for each file
+    let mut results_with_metadata = Vec::new();
+    for (file_id, file_path) in file_results {
+        // Get all metadata values for this file
+        let mut metadata_stmt = match conn.prepare(
+            "SELECT value FROM key_value WHERE file_id = ?1 ORDER BY key"
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to prepare metadata query: {}", e);
+                continue;
+            }
+        };
+
+        let metadata_rows = metadata_stmt.query_map(rusqlite::params![file_id], |row| {
+            let value: String = row.get(0)?;
+            Ok(value)
+        });
+
+        let mut all_metadata = Vec::new();
+        match metadata_rows {
+            Ok(mapped) => {
+                for row in mapped {
+                    match row {
+                        Ok(value) => {
+                            // Skip empty values and very long values that might be binary data
+                            if !value.trim().is_empty() && value.len() < 500 {
+                                all_metadata.push(value);
+                            }
+                        },
+                        Err(e) => {
+                            log::warn!("Error reading metadata value for file_id {}: {}", file_id, e);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("Metadata query error for file_id {}: {}", file_id, e);
+            }
+        }
+
+        results_with_metadata.push((file_path, all_metadata));
+    }
 
     // Generate HTML efficiently
     let mut html_parts = Vec::new();
     
-    // HTML header
-    html_parts.push(include_str!("../templates/search_header.html").to_string());
+    // HTML header with search term
+    let mut header_html = include_str!("../templates/search_header.html").to_string();
+    // Replace the placeholder in the search input with the actual search term
+    let escaped_search_term = html_escape(search_term);
+    header_html = header_html.replace(
+        r#"<input type="text" name="search" class="search-input" placeholder="Search images..." value="" />"#,
+        &format!(r#"<input type="text" name="search" class="search-input" placeholder="Search images..." value="{}" />"#, escaped_search_term)
+    );
+    html_parts.push(header_html);
 
-    // Generate result items with placeholder thumbnails
-    for (file_path, value, _) in unique_results {
+    // Generate result items with placeholder thumbnails and all metadata
+    for (file_path, all_metadata) in results_with_metadata {
         let escaped_file_path = html_escape(&file_path);
-        let highlighted_value = highlight_search_terms(&value, search_term);
+        
+        // Create highlighted metadata values
+        let mut highlighted_metadata = Vec::new();
+        for metadata_value in &all_metadata {
+            let highlighted_value = highlight_search_terms(metadata_value, search_term);
+            highlighted_metadata.push(highlighted_value);
+        }
+        
+        // Join all metadata values with line breaks
+        let combined_metadata = highlighted_metadata.join("<br>");
+        
         // Escape for JavaScript (replace single quotes)
         let js_safe_path = file_path.replace('\'', "\\'");
-        let js_safe_value = value.replace('\'', "\\'").replace('\n', "\\n").replace('\r', "");
+        let js_safe_value = all_metadata.join(" ").replace('\'', "\\'").replace('\n', "\\n").replace('\r', "");
         let encoded_path = urlencoding::encode(&file_path);
         
         let item_html = format!(r#"
@@ -324,7 +425,7 @@ pub async fn search_page(query: web::Query<IndexQuery>) -> HttpResponse {
             <div class="file-path">{}</div>
             <div class="value-text">{}</div>
         </div>
-"#, encoded_path, escaped_file_path, js_safe_path, js_safe_value, escaped_file_path, highlighted_value);
+"#, encoded_path, escaped_file_path, js_safe_path, js_safe_value, escaped_file_path, combined_metadata);
         html_parts.push(item_html);
     }
 
