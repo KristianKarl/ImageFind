@@ -45,19 +45,8 @@ fn highlight_search_terms(text: &str, search_term: &str) -> String {
     // Escape the original text first
     let mut escaped_text = html_escape(text);
     
-    // Extract all search terms (handle AND logic)
-    let and_parts: Vec<&str> = search_term
-        .split(" AND ")
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .collect();
-    
-    // If no AND found, treat as single term
-    let terms_to_highlight = if and_parts.len() <= 1 {
-        vec![search_term]
-    } else {
-        and_parts
-    };
+    // Parse search terms using the same logic as the search query
+    let terms_to_highlight = parse_search_terms(search_term);
     
     // Highlight each term
     for term in terms_to_highlight {
@@ -87,7 +76,7 @@ fn highlight_search_terms(text: &str, search_term: &str) -> String {
     escaped_text
 }
 
-// Function to parse search query and handle AND logic
+// Function to parse search query and handle cross-field search
 fn parse_search_query(search_term: &str) -> (String, Vec<String>) {
     if search_term.trim().is_empty() {
         return ("WHERE key_value.value LIKE ?1".to_string(), vec![format!("%{}%", search_term)]);
@@ -105,17 +94,21 @@ fn parse_search_query(search_term: &str) -> (String, Vec<String>) {
         return ("WHERE key_value.value LIKE ?1".to_string(), vec![format!("%{}%", terms[0])]);
     }
     
-    // Build WHERE clause with multiple AND conditions
-    let mut where_parts = Vec::new();
+    // Build WHERE clause that searches across all metadata fields for each file
+    // Each term must be found in at least one metadata field of the same file
+    let mut where_conditions = Vec::new();
     let mut parameters = Vec::new();
     
     for (i, term) in terms.iter().enumerate() {
         let param_num = i + 1;
-        where_parts.push(format!("key_value.value LIKE ?{}", param_num));
+        where_conditions.push(format!(
+            "file.id IN (SELECT DISTINCT kv{}.file_id FROM key_value kv{} WHERE kv{}.value LIKE ?{})",
+            param_num, param_num, param_num, param_num
+        ));
         parameters.push(format!("%{}%", term.trim()));
     }
     
-    let where_clause = format!("WHERE {}", where_parts.join(" AND "));
+    let where_clause = format!("WHERE {}", where_conditions.join(" AND "));
     (where_clause, parameters)
 }
 
