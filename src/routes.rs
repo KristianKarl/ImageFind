@@ -382,8 +382,15 @@ pub async fn search_page(query: web::Query<IndexQuery>) -> HttpResponse {
     // Generate HTML efficiently
     let mut html_parts = Vec::new();
     
-    // HTML header
-    html_parts.push(include_str!("../templates/search_header.html").to_string());
+    // HTML header with search term
+    let mut header_html = include_str!("../templates/search_header.html").to_string();
+    // Replace the placeholder in the search input with the actual search term
+    let escaped_search_term = html_escape(search_term);
+    header_html = header_html.replace(
+        r#"<input type="text" name="search" class="search-input" placeholder="Search images..." value="" />"#,
+        &format!(r#"<input type="text" name="search" class="search-input" placeholder="Search images..." value="{}" />"#, escaped_search_term)
+    );
+    html_parts.push(header_html);
 
     // Generate result items with placeholder thumbnails and all metadata
     for (file_path, all_metadata) in results_with_metadata {
