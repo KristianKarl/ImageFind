@@ -13,6 +13,8 @@ use crate::processing::{
     tiff::generate_tiff_preview,
     video::generate_video_thumbnail,
 };
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use once_cell::sync::Lazy;
 
 #[derive(Deserialize)]
 pub struct IndexQuery {
@@ -25,6 +27,21 @@ pub struct SearchResult {
     pub file_path: String,
     pub value: String,
     pub thumbnail_base64: Option<String>,
+}
+
+// Global flag to indicate if user requests are active
+pub static USER_REQUEST_ACTIVE: Lazy<Arc<AtomicBool>> = Lazy::new(|| Arc::new(AtomicBool::new(false)));
+
+// Helper to wrap user request handlers and set/unset the busy flag
+async fn with_user_activity<F, Fut, R>(f: F) -> R
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = R>,
+{
+    USER_REQUEST_ACTIVE.store(true, Ordering::SeqCst);
+    let result = f().await;
+    USER_REQUEST_ACTIVE.store(false, Ordering::SeqCst);
+    result
 }
 
 // Function to escape HTML characters
@@ -439,315 +456,321 @@ pub async fn search_page(query: web::Query<IndexQuery>) -> HttpResponse {
 
 // Add a new endpoint for fetching individual thumbnails
 pub async fn get_thumbnail(path: web::Path<String>) -> impl Responder {
-    let image_path = path.into_inner();
-    log::debug!("Thumbnail request for: {}", image_path);
-    
-    // Decode URL-encoded path
-    let decoded_path = urlencoding::decode(&image_path).unwrap_or_else(|_| image_path.clone().into());
-    let clean_path = decoded_path.to_string();
-    
-    // Security check - prevent path traversal
-    if clean_path.contains("..") {
-        log::warn!("Path traversal attempt blocked: {}", clean_path);
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "error": "Invalid path: path traversal not allowed"
-        }));
-    }
-    
-    // Remove ".xmp" suffix if present
-    let file_path = clean_path.strip_suffix(".xmp").unwrap_or(&clean_path).to_string();
-    log::trace!("Processing thumbnail for cleaned path: {}", file_path);
-    
-    // Generate thumbnail in a blocking task
-    let thumbnail_result = tokio::task::spawn_blocking(move || {
-        generate_thumbnail(&file_path)
-    }).await;
-    
-    match thumbnail_result {
-        Ok(Some(thumbnail_base64)) => {
-            log::debug!("Successfully generated thumbnail for: {}", clean_path);
-            HttpResponse::Ok().json(serde_json::json!({
-                "thumbnail": thumbnail_base64,
-                "file_path": clean_path
-            }))
+    with_user_activity(|| async move {
+        let image_path = path.into_inner();
+        log::debug!("Thumbnail request for: {}", image_path);
+        
+        // Decode URL-encoded path
+        let decoded_path = urlencoding::decode(&image_path).unwrap_or_else(|_| image_path.clone().into());
+        let clean_path = decoded_path.to_string();
+        
+        // Security check - prevent path traversal
+        if clean_path.contains("..") {
+            log::warn!("Path traversal attempt blocked: {}", clean_path);
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "error": "Invalid path: path traversal not allowed"
+            }));
         }
-        Ok(None) => {
-            log::warn!("Could not generate thumbnail for: {}", clean_path);
-            HttpResponse::Ok().json(serde_json::json!({
-                "thumbnail": null,
-                "file_path": clean_path
-            }))
+        
+        // Remove ".xmp" suffix if present
+        let file_path = clean_path.strip_suffix(".xmp").unwrap_or(&clean_path).to_string();
+        log::trace!("Processing thumbnail for cleaned path: {}", file_path);
+        
+        // Generate thumbnail in a blocking task
+        let thumbnail_result = tokio::task::spawn_blocking(move || {
+            generate_thumbnail(&file_path)
+        }).await;
+        
+        match thumbnail_result {
+            Ok(Some(thumbnail_base64)) => {
+                log::debug!("Successfully generated thumbnail for: {}", clean_path);
+                HttpResponse::Ok().json(serde_json::json!({
+                    "thumbnail": thumbnail_base64,
+                    "file_path": clean_path
+                }))
+            }
+            Ok(None) => {
+                log::warn!("Could not generate thumbnail for: {}", clean_path);
+                HttpResponse::Ok().json(serde_json::json!({
+                    "thumbnail": null,
+                    "file_path": clean_path
+                }))
+            }
+            Err(e) => {
+                log::error!("Thumbnail generation task failed for {}: {:?}", clean_path, e);
+                HttpResponse::InternalServerError().json(serde_json::json!({
+                    "error": "Failed to generate thumbnail",
+                    "file_path": clean_path
+                }))
+            }
         }
-        Err(e) => {
-            log::error!("Thumbnail generation task failed for {}: {:?}", clean_path, e);
-            HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": "Failed to generate thumbnail",
-                "file_path": clean_path
-            }))
-        }
-    }
+    }).await
 }
 
 pub async fn serve_image(path: web::Path<String>, query: web::Query<HashMap<String, String>>) -> impl Responder {
-    let image_path = path.into_inner();
-    log::info!("Image serve request for: {}", image_path);
-    
-    // Decode URL-encoded path
-    let decoded_path = urlencoding::decode(&image_path).unwrap_or_else(|_| image_path.clone().into());
-    let clean_path = decoded_path.to_string();
-    log::debug!("Decoded path: {}", clean_path);
-    
-    // Handle absolute paths by making them relative to current directory or accepting them if they're in allowed directories
-    let safe_path = Path::new(&clean_path);
-    
-    // Security check - prevent path traversal but allow absolute paths in safe directories
-    if clean_path.contains("..") {
-        log::warn!("Path traversal attempt blocked for image: {}", clean_path);
-        return HttpResponse::BadRequest().body("Invalid path: path traversal not allowed");
-    }
-    
-    // Additional security: ensure the path exists and is a file
-    if !safe_path.exists() {
-        log::warn!("Image file not found: {}", clean_path);
-        return HttpResponse::NotFound().body("Image file not found");
-    }
-    
-    if !safe_path.is_file() {
-        log::warn!("Path is not a file: {}", clean_path);
-        return HttpResponse::BadRequest().body("Path is not a file");
-    }
-    
-    // Generate cache key for this image
-    let cache_key = generate_cache_key(&clean_path);
-    log::trace!("Generated cache key: {}", cache_key);
-    
-    // Check if this is a cache-busting request (has timestamp parameter)
-    let is_cache_bust = query.contains_key("t");
-    if is_cache_bust {
-        log::debug!("Cache-busting request detected for: {}", clean_path);
-    }
-    
-    // Check cache first (skip cache if cache-busting)
-    if !is_cache_bust {
-        if let Some(cached_image) = get_cached_full_image(&cache_key) {
-            log::debug!("Serving cached image for: {}", clean_path);
-            return HttpResponse::Ok()
-                .content_type("image/jpeg")
-                .append_header(("Cache-Control", "public, max-age=3600"))
-                .body(cached_image);
-        }
-        log::trace!("No cached image found for: {}", clean_path);
-    }
-    
-    // Determine file type before the closure
-    let is_video = match safe_path.extension().and_then(|ext| ext.to_str()) {
-        Some(ext) => {
-            let ext_lower = ext.to_lowercase();
-            match ext_lower.as_str() {
-                "mp4" | "avi" | "mov" | "wmv" | "flv" | 
-                "webm" | "mkv" | "m4v" | "3gp" | "ogv" => true,
-                _ => false,
-            }
-        }
-        _ => false,
-    };
-    
-    let is_raw = match safe_path.extension().and_then(|ext| ext.to_str()) {
-        Some(ext) => {
-            let ext_lower = ext.to_lowercase();
-            match ext_lower.as_str() {
-                "nef" | "cr2" | "cr3" | "arw" | "orf" | "rw2" | "raf" | "dng" | 
-                "3fr" | "ari" | "bay" | "crw" | "dcr" | "erf" | "fff" | "iiq" | 
-                "k25" | "kdc" | "mdc" | "mos" | "mrw" | "pef" | "ptx" | "pxn" | 
-                "r3d" | "rwl" | "sr2" | "srf" | "srw" | "x3f" => true,
-                _ => false,
-            }
-        }
-        _ => false,
-    };
-    
-    log::debug!("Processing image file: {} (is_video: {}, is_raw: {})", clean_path, is_video, is_raw);
-    
-    // Clone the path for the closure
-    let image_path_for_closure = clean_path.clone();
-    
-    // Process the image synchronously to ensure it's ready before the response
-    let processed_image = tokio::task::spawn_blocking(move || {
-        log::trace!("Starting image processing task for: {}", image_path_for_closure);
+    with_user_activity(|| async move {
+        let image_path = path.into_inner();
+        log::info!("Image serve request for: {}", image_path);
         
-        // Try to read and process the image file
-        match std::fs::read(&image_path_for_closure) {
-            Ok(image_data) => {
-                log::debug!("Successfully read image data, size: {} bytes", image_data.len());
-                
-                if is_video {
-                    log::debug!("Processing video thumbnail for: {}", image_path_for_closure);
-                    // For videos, try to use the existing thumbnail generation
-                    if let Some(thumbnail_base64) = generate_video_thumbnail(&image_path_for_closure) {
-                        if let Ok(thumbnail_bytes) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &thumbnail_base64) {
-                            // Scale up the thumbnail to a reasonable preview size
-                            if let Ok(img) = image::load_from_memory(&thumbnail_bytes) {
-                                let preview = img.resize(
-                                    800, 
-                                    800, 
-                                    image::imageops::FilterType::CatmullRom // Faster algorithm
-                                );
-                                let mut jpeg_bytes = Vec::new();
-                                if preview.write_with_encoder(
-                                    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg_bytes, 50) // Lower quality for speed
-                                ).is_ok() {
-                                    // Save to cache
-                                    let _ = save_full_image_to_cache(&cache_key, &jpeg_bytes);
-                                    return Ok(jpeg_bytes);
+        // Decode URL-encoded path
+        let decoded_path = urlencoding::decode(&image_path).unwrap_or_else(|_| image_path.clone().into());
+        let clean_path = decoded_path.to_string();
+        log::debug!("Decoded path: {}", clean_path);
+        
+        // Handle absolute paths by making them relative to current directory or accepting them if they're in allowed directories
+        let safe_path = Path::new(&clean_path);
+        
+        // Security check - prevent path traversal but allow absolute paths in safe directories
+        if clean_path.contains("..") {
+            log::warn!("Path traversal attempt blocked for image: {}", clean_path);
+            return HttpResponse::BadRequest().body("Invalid path: path traversal not allowed");
+        }
+        
+        // Additional security: ensure the path exists and is a file
+        if !safe_path.exists() {
+            log::warn!("Image file not found: {}", clean_path);
+            return HttpResponse::NotFound().body("Image file not found");
+        }
+        
+        if !safe_path.is_file() {
+            log::warn!("Path is not a file: {}", clean_path);
+            return HttpResponse::BadRequest().body("Path is not a file");
+        }
+        
+        // Generate cache key for this image
+        let cache_key = generate_cache_key(&clean_path);
+        log::trace!("Generated cache key: {}", cache_key);
+        
+        // Check if this is a cache-busting request (has timestamp parameter)
+        let is_cache_bust = query.contains_key("t");
+        if is_cache_bust {
+            log::debug!("Cache-busting request detected for: {}", clean_path);
+        }
+        
+        // Check cache first (skip cache if cache-busting)
+        if !is_cache_bust {
+            if let Some(cached_image) = get_cached_full_image(&cache_key) {
+                log::debug!("Serving cached image for: {}", clean_path);
+                return HttpResponse::Ok()
+                    .content_type("image/jpeg")
+                    .append_header(("Cache-Control", "public, max-age=3600"))
+                    .body(cached_image);
+            }
+            log::trace!("No cached image found for: {}", clean_path);
+        }
+        
+        // Determine file type before the closure
+        let is_video = match safe_path.extension().and_then(|ext| ext.to_str()) {
+            Some(ext) => {
+                let ext_lower = ext.to_lowercase();
+                match ext_lower.as_str() {
+                    "mp4" | "avi" | "mov" | "wmv" | "flv" | 
+                    "webm" | "mkv" | "m4v" | "3gp" | "ogv" => true,
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+        
+        let is_raw = match safe_path.extension().and_then(|ext| ext.to_str()) {
+            Some(ext) => {
+                let ext_lower = ext.to_lowercase();
+                match ext_lower.as_str() {
+                    "nef" | "cr2" | "cr3" | "arw" | "orf" | "rw2" | "raf" | "dng" | 
+                    "3fr" | "ari" | "bay" | "crw" | "dcr" | "erf" | "fff" | "iiq" | 
+                    "k25" | "kdc" | "mdc" | "mos" | "mrw" | "pef" | "ptx" | "pxn" | 
+                    "r3d" | "rwl" | "sr2" | "srf" | "srw" | "x3f" => true,
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+        
+        log::debug!("Processing image file: {} (is_video: {}, is_raw: {})", clean_path, is_video, is_raw);
+        
+        // Clone the path for the closure
+        let image_path_for_closure = clean_path.clone();
+        
+        // Process the image synchronously to ensure it's ready before the response
+        let processed_image = tokio::task::spawn_blocking(move || {
+            log::trace!("Starting image processing task for: {}", image_path_for_closure);
+            
+            // Try to read and process the image file
+            match std::fs::read(&image_path_for_closure) {
+                Ok(image_data) => {
+                    log::debug!("Successfully read image data, size: {} bytes", image_data.len());
+                    
+                    if is_video {
+                        log::debug!("Processing video thumbnail for: {}", image_path_for_closure);
+                        // For videos, try to use the existing thumbnail generation
+                        if let Some(thumbnail_base64) = generate_video_thumbnail(&image_path_for_closure) {
+                            if let Ok(thumbnail_bytes) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &thumbnail_base64) {
+                                // Scale up the thumbnail to a reasonable preview size
+                                if let Ok(img) = image::load_from_memory(&thumbnail_bytes) {
+                                    let preview = img.resize(
+                                        800, 
+                                        800, 
+                                        image::imageops::FilterType::CatmullRom // Faster algorithm
+                                    );
+                                    let mut jpeg_bytes = Vec::new();
+                                    if preview.write_with_encoder(
+                                        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg_bytes, 50) // Lower quality for speed
+                                    ).is_ok() {
+                                        // Save to cache
+                                        let _ = save_full_image_to_cache(&cache_key, &jpeg_bytes);
+                                        return Ok(jpeg_bytes);
+                                    }
                                 }
                             }
                         }
+                        return Err("Video preview not available".to_string());
                     }
-                    return Err("Video preview not available".to_string());
-                }
-                
-                // Check if this is a RAW file and try rawloader with RGB demosaicing
-                let path_lower = image_path_for_closure.to_lowercase();
-                if path_lower.ends_with(".nef") || path_lower.ends_with(".cr2") || path_lower.ends_with(".cr3") || 
-                   path_lower.ends_with(".arw") || path_lower.ends_with(".orf") || path_lower.ends_with(".rw2") || 
-                   path_lower.ends_with(".raf") || path_lower.ends_with(".dng") {
-                    log::info!("Detected RAW file for preview processing: {}", image_path_for_closure);
                     
-                    // Try rawloader with RGB demosaicing first
-                    match generate_raw_preview(&image_path_for_closure, &cache_key) {
-                        Ok(jpeg_bytes) => {
-                            log::info!("Successfully processed RAW preview with rawloader RGB demosaicing");
-                            return Ok(jpeg_bytes);
-                        }
-                        Err(e) => {
-                            log::warn!("RAW rawloader processing failed, falling back to standard: {} - {}", image_path_for_closure, e);
-                            // Continue to standard processing below
-                        }
-                    }
-                }
-                
-                // Check if this is a TIFF file and try specialized handling first
-                if path_lower.ends_with(".tiff") || path_lower.ends_with(".tif") {
-                    log::info!("Detected TIFF file for preview processing: {}", image_path_for_closure);
-                    match generate_tiff_preview(&image_path_for_closure, &cache_key) {
-                        Ok(jpeg_bytes) => {
-                            log::info!("Successfully processed TIFF preview with tiff crate");
-                            return Ok(jpeg_bytes);
-                        }
-                        Err(e) => {
-                            log::warn!("TIFF specialized processing failed, falling back to standard: {} - {}", image_path_for_closure, e);
-                            // Continue to standard processing below
+                    // Check if this is a RAW file and try rawloader with RGB demosaicing
+                    let path_lower = image_path_for_closure.to_lowercase();
+                    if path_lower.ends_with(".nef") || path_lower.ends_with(".cr2") || path_lower.ends_with(".cr3") || 
+                       path_lower.ends_with(".arw") || path_lower.ends_with(".orf") || path_lower.ends_with(".rw2") || 
+                       path_lower.ends_with(".raf") || path_lower.ends_with(".dng") {
+                        log::info!("Detected RAW file for preview processing: {}", image_path_for_closure);
+                        
+                        // Try rawloader with RGB demosaicing first
+                        match generate_raw_preview(&image_path_for_closure, &cache_key) {
+                            Ok(jpeg_bytes) => {
+                                log::info!("Successfully processed RAW preview with rawloader RGB demosaicing");
+                                return Ok(jpeg_bytes);
+                            }
+                            Err(e) => {
+                                log::warn!("RAW rawloader processing failed, falling back to standard: {} - {}", image_path_for_closure, e);
+                                // Continue to standard processing below
+                            }
                         }
                     }
-                }
-                
+                    
+                    // Check if this is a TIFF file and try specialized handling first
+                    if path_lower.ends_with(".tiff") || path_lower.ends_with(".tif") {
+                        log::info!("Detected TIFF file for preview processing: {}", image_path_for_closure);
+                        match generate_tiff_preview(&image_path_for_closure, &cache_key) {
+                            Ok(jpeg_bytes) => {
+                                log::info!("Successfully processed TIFF preview with tiff crate");
+                                return Ok(jpeg_bytes);
+                            }
+                            Err(e) => {
+                                log::warn!("TIFF specialized processing failed, falling back to standard: {} - {}", image_path_for_closure, e);
+                                // Continue to standard processing below
+                            }
+                        }
+                    }
+                    
 
-                match image_path_for_closure.split('.').last().unwrap_or("").to_lowercase().as_str() {
-                    "jpg" | "jpeg" | "png" | "gif" | "bmp" | "webp" => {
-                        generate_external_preview(&image_path_for_closure, &cache_key)
-                    }
-                    _ => {
-                        // If image processing fails completely, try to return original as fallback
-                        // but only for smaller files to avoid memory issues
-                        if image_data.len() < 50_000_000 { // 50MB limit
-                            Ok(image_data)
-                        } else {
-                            Err("Image too large and processing failed".to_string())
+                    match image_path_for_closure.split('.').last().unwrap_or("").to_lowercase().as_str() {
+                        "jpg" | "jpeg" | "png" | "gif" | "bmp" | "webp" => {
+                            generate_external_preview(&image_path_for_closure, &cache_key)
+                        }
+                        _ => {
+                            // If image processing fails completely, try to return original as fallback
+                            // but only for smaller files to avoid memory issues
+                            if image_data.len() < 50_000_000 { // 50MB limit
+                                Ok(image_data)
+                            } else {
+                                Err("Image too large and processing failed".to_string())
+                            }
                         }
                     }
                 }
+                Err(e) => {
+                    log::error!("Failed to read image file {}: {}", image_path_for_closure, e);
+                    Err("Image file not found".to_string())
+                }
+            }
+        }).await;
+        
+        match processed_image {
+            Ok(Ok(jpeg_bytes)) => {
+                log::info!("Successfully processed image: {}, final size: {} bytes", clean_path, jpeg_bytes.len());
+                // Add cache headers based on whether this is a cache-busting request
+                if is_cache_bust {
+                    HttpResponse::Ok()
+                        .content_type("image/jpeg")
+                        .append_header(("Cache-Control", "no-cache, must-revalidate"))
+                        .body(jpeg_bytes)
+                } else {
+                    HttpResponse::Ok()
+                        .content_type("image/jpeg")
+                        .append_header(("Cache-Control", "public, max-age=3600"))
+                        .body(jpeg_bytes)
+                }
+            }
+            Ok(Err(error_msg)) => {
+                log::error!("Image processing error for {}: {}", clean_path, error_msg);
+                HttpResponse::InternalServerError()
+                    .content_type("text/plain")
+                    .body(format!("Image processing failed: {}", error_msg))
             }
             Err(e) => {
-                log::error!("Failed to read image file {}: {}", image_path_for_closure, e);
-                Err("Image file not found".to_string())
+                log::error!("Task execution error for image {}: {:?}", clean_path, e);
+                HttpResponse::InternalServerError()
+                    .content_type("text/plain")
+                    .body("Internal processing error".to_string())
             }
         }
-    }).await;
-    
-    match processed_image {
-        Ok(Ok(jpeg_bytes)) => {
-            log::info!("Successfully processed image: {}, final size: {} bytes", clean_path, jpeg_bytes.len());
-            // Add cache headers based on whether this is a cache-busting request
-            if is_cache_bust {
-                HttpResponse::Ok()
-                    .content_type("image/jpeg")
-                    .append_header(("Cache-Control", "no-cache, must-revalidate"))
-                    .body(jpeg_bytes)
-            } else {
-                HttpResponse::Ok()
-                    .content_type("image/jpeg")
-                    .append_header(("Cache-Control", "public, max-age=3600"))
-                    .body(jpeg_bytes)
-            }
-        }
-        Ok(Err(error_msg)) => {
-            log::error!("Image processing error for {}: {}", clean_path, error_msg);
-            HttpResponse::InternalServerError()
-                .content_type("text/plain")
-                .body(format!("Image processing failed: {}", error_msg))
-        }
-        Err(e) => {
-            log::error!("Task execution error for image {}: {:?}", clean_path, e);
-            HttpResponse::InternalServerError()
-                .content_type("text/plain")
-                .body("Internal processing error".to_string())
-        }
-    }
+    }).await
 }
 
 // Add this function near the other endpoints
 pub async fn serve_video(path: web::Path<String>) -> impl Responder {
-    let video_path = path.into_inner();
-    log::info!("Video preview request for: {}", video_path);
+    with_user_activity(|| async move {
+        let video_path = path.into_inner();
+        log::info!("Video preview request for: {}", video_path);
 
-    // Decode URL-encoded path
-    let decoded_path = urlencoding::decode(&video_path).unwrap_or_else(|_| video_path.clone().into());
-    let clean_path = decoded_path.to_string();
+        // Decode URL-encoded path
+        let decoded_path = urlencoding::decode(&video_path).unwrap_or_else(|_| video_path.clone().into());
+        let clean_path = decoded_path.to_string();
 
-    // Security check - prevent path traversal
-    if clean_path.contains("..") {
-        log::warn!("Path traversal attempt blocked for video: {}", clean_path);
-        return HttpResponse::BadRequest().body("Invalid path: path traversal not allowed");
-    }
+        // Security check - prevent path traversal
+        if clean_path.contains("..") {
+            log::warn!("Path traversal attempt blocked for video: {}", clean_path);
+            return HttpResponse::BadRequest().body("Invalid path: path traversal not allowed");
+        }
 
-    // Get video preview cache directory from CLI args
-    let args = get_cli_args();
-    let preview_cache_dir = std::path::Path::new(&args.video_preview_cache);
+        // Get video preview cache directory from CLI args
+        let args = get_cli_args();
+        let preview_cache_dir = std::path::Path::new(&args.video_preview_cache);
 
-    // Build the _480p preview filename (basename + _480p.mp4)
-    let orig_path = std::path::Path::new(&clean_path);
-    let stem = orig_path.file_stem();
-    let ext = orig_path.extension();
+        // Build the _480p preview filename (basename + _480p.mp4)
+        let orig_path = std::path::Path::new(&clean_path);
+        let stem = orig_path.file_stem();
+        let ext = orig_path.extension();
 
-    let transcoded_file_path = if let (Some(stem), Some(_ext)) = (stem, ext) {
-        let mut transcoded_file_name = stem.to_os_string();
-        transcoded_file_name.push("_480p.mp4");
-        preview_cache_dir.join(transcoded_file_name)
-    } else {
-        log::warn!("Could not construct _480p filename for: {}", clean_path);
-        return HttpResponse::NotFound().body("Invalid video path");
-    };
+        let transcoded_file_path = if let (Some(stem), Some(_ext)) = (stem, ext) {
+            let mut transcoded_file_name = stem.to_os_string();
+            transcoded_file_name.push("_480p.mp4");
+            preview_cache_dir.join(transcoded_file_name)
+        } else {
+            log::warn!("Could not construct _480p filename for: {}", clean_path);
+            return HttpResponse::NotFound().body("Invalid video path");
+        };
 
-    log::info!("Looking for transcoded video file in preview cache: {}", transcoded_file_path.display());
+        log::info!("Looking for transcoded video file in preview cache: {}", transcoded_file_path.display());
 
-    if !transcoded_file_path.exists() {
-        log::warn!("Transcoded video file not found: {}", transcoded_file_path.display());
-        return HttpResponse::NotFound().body("Transcoded video file not found");
-    }
+        if !transcoded_file_path.exists() {
+            log::warn!("Transcoded video file not found: {}", transcoded_file_path.display());
+            return HttpResponse::NotFound().body("Transcoded video file not found");
+        }
 
-    match std::fs::File::open(&transcoded_file_path) {
-        Ok(mut file) => {
-            let mut buf = Vec::new();
-            if std::io::Read::read_to_end(&mut file, &mut buf).is_ok() {
-                return HttpResponse::Ok()
-                    .content_type("video/mp4")
-                    .append_header(("Cache-Control", "public, max-age=3600"))
-                    .body(buf);
+        match std::fs::File::open(&transcoded_file_path) {
+            Ok(mut file) => {
+                let mut buf = Vec::new();
+                if std::io::Read::read_to_end(&mut file, &mut buf).is_ok() {
+                    return HttpResponse::Ok()
+                        .content_type("video/mp4")
+                        .append_header(("Cache-Control", "public, max-age=3600"))
+                        .body(buf);
+                }
+            }
+            Err(e) => {
+                log::error!("Failed to open transcoded video file: {}", e);
             }
         }
-        Err(e) => {
-            log::error!("Failed to open transcoded video file: {}", e);
-        }
-    }
-    HttpResponse::InternalServerError().body("Failed to read transcoded video")
+        HttpResponse::InternalServerError().body("Failed to read transcoded video")
+    }).await
 }
