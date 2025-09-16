@@ -3,31 +3,6 @@
 version = 4
 
 [[package]]
-name = "ImageFind"
-version = "0.2.0"
-dependencies = [
- "actix-web",
- "base64",
- "clap",
- "env_logger",
- "futures",
- "image",
- "log",
- "num_cpus",
- "quick-xml",
- "rayon",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "tiff",
- "tokio",
- "urlencoding",
- "walkdir",
- "xxhash-rust",
-]
-
-[[package]]
 name = "actix-codec"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1184,6 +1159,31 @@ checksum = "f6970fe7a5300b4b42e62c52efa0187540a5bef546c60edaf554ef595d2e6f0b"
 dependencies = [
  "byteorder-lite",
  "quick-error",
+]
+
+[[package]]
+name = "image_find"
+version = "0.2.0"
+dependencies = [
+ "actix-web",
+ "base64",
+ "clap",
+ "env_logger",
+ "futures",
+ "image",
+ "log",
+ "num_cpus",
+ "quick-xml",
+ "rayon",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tiff",
+ "tokio",
+ "urlencoding",
+ "walkdir",
+ "xxhash-rust",
 ]
 
 [[package]]

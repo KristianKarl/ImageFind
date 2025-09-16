@@ -2,32 +2,55 @@ use std::fs;
 use std::io;
 use std::path::Path;
 use sha2::{Sha256, Digest};
-use crate::cli::get_cli_args;
 
 // Function to get thumbnail cache directory path
 pub fn get_cache_dir() -> std::path::PathBuf {
-    let args = get_cli_args();
-    let cache_dir = Path::new(&args.thumbnail_cache);
-    if !cache_dir.exists() {
-        log::info!("Creating thumbnail cache directory: {}", cache_dir.display());
-        fs::create_dir_all(&cache_dir).expect("Failed to create cache directory");
-    } else {
-        log::trace!("Thumbnail cache directory exists: {}", cache_dir.display());
+    // Try to get from CLI args if available, otherwise use temp directory for tests
+    match std::panic::catch_unwind(|| crate::cli::get_cli_args()) {
+        Ok(args) => {
+            let cache_dir = Path::new(&args.thumbnail_cache);
+            if !cache_dir.exists() {
+                log::info!("Creating thumbnail cache directory: {}", cache_dir.display());
+                fs::create_dir_all(&cache_dir).expect("Failed to create cache directory");
+            } else {
+                log::trace!("Thumbnail cache directory exists: {}", cache_dir.display());
+            }
+            cache_dir.to_path_buf()
+        }
+        Err(_) => {
+            // CLI args not available (probably in tests), use temp directory
+            let temp_dir = std::env::temp_dir().join("imagefind_test_thumbnail_cache");
+            if !temp_dir.exists() {
+                fs::create_dir_all(&temp_dir).expect("Failed to create test cache directory");
+            }
+            temp_dir
+        }
     }
-    cache_dir.to_path_buf()
 }
 
 // Function to get cache directory path for full images
 pub fn get_full_image_cache_dir() -> std::path::PathBuf {
-    let args = get_cli_args();
-    let cache_dir = Path::new(&args.full_image_cache);
-    if !cache_dir.exists() {
-        log::info!("Creating full image cache directory: {}", cache_dir.display());
-        fs::create_dir_all(&cache_dir).expect("Failed to create full image cache directory");
-    } else {
-        log::trace!("Full image cache directory exists: {}", cache_dir.display());
+    // Try to get from CLI args if available, otherwise use temp directory for tests
+    match std::panic::catch_unwind(|| crate::cli::get_cli_args()) {
+        Ok(args) => {
+            let cache_dir = Path::new(&args.full_image_cache);
+            if !cache_dir.exists() {
+                log::info!("Creating full image cache directory: {}", cache_dir.display());
+                fs::create_dir_all(&cache_dir).expect("Failed to create full image cache directory");
+            } else {
+                log::trace!("Full image cache directory exists: {}", cache_dir.display());
+            }
+            cache_dir.to_path_buf()
+        }
+        Err(_) => {
+            // CLI args not available (probably in tests), use temp directory
+            let temp_dir = std::env::temp_dir().join("imagefind_test_full_image_cache");
+            if !temp_dir.exists() {
+                fs::create_dir_all(&temp_dir).expect("Failed to create test full image cache directory");
+            }
+            temp_dir
+        }
     }
-    cache_dir.to_path_buf()
 }
 
 // Function to generate cache key from file path

@@ -109,6 +109,143 @@ fn find_raf_jpegs(data: &[u8]) -> Vec<(usize, usize, usize)> {
     candidates
 }
 
+// Enhanced NEF-specific JPEG extraction
+fn find_nef_jpegs(data: &[u8]) -> Vec<(usize, usize, usize)> {
+    log::debug!("Attempting NEF-specific JPEG extraction");
+    
+    let mut candidates = Vec::new();
+    let mut i = 0;
+    
+    while i < data.len() - 1 {
+        if data[i] == 0xFF && data[i + 1] == 0xD8 {
+            log::trace!("Found JPEG SOI at offset: {}", i);
+            
+            let start = i;
+            let mut end = i + 2;
+            let mut found_end = false;
+            let mut in_scan_data = false;
+            
+            // Enhanced JPEG parsing for NEF files
+            while end < data.len() - 1 {
+                if data[end] == 0xFF && end + 1 < data.len() {
+                    let marker = data[end + 1];
+                    match marker {
+                        0xD9 => {
+                            // End of Image marker
+                            end += 2;
+                            found_end = true;
+                            log::trace!("Found JPEG EOI at offset: {}", end);
+                            break;
+                        }
+                        0xD8 => {
+                            // Another SOI - this means we hit another JPEG
+                            log::trace!("Found another SOI at offset {}, ending current JPEG", end);
+                            break;
+                        }
+                        0xDA => {
+                            // Start of Scan - we're entering compressed image data
+                            log::trace!("Found SOS marker at offset: {}", end);
+                            end += 2;
+                            // Skip scan header
+                            if end + 1 < data.len() {
+                                let scan_length = ((data[end] as u16) << 8) | (data[end + 1] as u16);
+                                end += scan_length as usize;
+                                in_scan_data = true;
+                            }
+                        }
+                        0x00 => {
+                            // Escaped FF in scan data
+                            if in_scan_data {
+                                end += 2;
+                            } else {
+                                end += 1;
+                            }
+                        }
+                        marker if (0xD0..=0xD7).contains(&marker) => {
+                            // Restart markers - no length field
+                            end += 2;
+                        }
+                        marker if (0xE0..=0xEF).contains(&marker) => {
+                            // Application segments
+                            end += 2;
+                            if end + 1 < data.len() {
+                                let seg_length = ((data[end] as u16) << 8) | (data[end + 1] as u16);
+                                end += seg_length as usize;
+                                log::trace!("Skipped APP segment, length: {}", seg_length);
+                            }
+                        }
+                        marker if (0xC0..=0xCF).contains(&marker) && marker != 0xC4 && marker != 0xCC => {
+                            // Start of Frame segments
+                            end += 2;
+                            if end + 1 < data.len() {
+                                let seg_length = ((data[end] as u16) << 8) | (data[end + 1] as u16);
+                                end += seg_length as usize;
+                                log::trace!("Skipped SOF segment, length: {}", seg_length);
+                            }
+                        }
+                        0xC4 => {
+                            // Define Huffman Table
+                            end += 2;
+                            if end + 1 < data.len() {
+                                let seg_length = ((data[end] as u16) << 8) | (data[end + 1] as u16);
+                                end += seg_length as usize;
+                                log::trace!("Skipped DHT segment, length: {}", seg_length);
+                            }
+                        }
+                        0xDB => {
+                            // Define Quantization Table
+                            end += 2;
+                            if end + 1 < data.len() {
+                                let seg_length = ((data[end] as u16) << 8) | (data[end + 1] as u16);
+                                end += seg_length as usize;
+                                log::trace!("Skipped DQT segment, length: {}", seg_length);
+                            }
+                        }
+                        _ => {
+                            // Other markers with length field
+                            end += 2;
+                            if end + 1 < data.len() {
+                                let seg_length = ((data[end] as u16) << 8) | (data[end + 1] as u16);
+                                if seg_length >= 2 {
+                                    end += seg_length as usize;
+                                } else {
+                                    // Invalid segment length, skip
+                                    end += 1;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    end += 1;
+                }
+            }
+            
+            if found_end {
+                let size = end - start;
+                log::debug!("Found complete NEF JPEG: {} bytes at offset {}", size, start);
+                
+                // Include JPEGs larger than 3KB for NEF (they tend to have smaller previews)
+                if size > 3_000 {
+                    candidates.push((start, end, size));
+                } else {
+                    log::trace!("NEF JPEG too small ({}), skipping", size);
+                }
+            } else {
+                log::trace!("NEF JPEG at offset {} incomplete, skipping", start);
+            }
+            
+            i = if found_end { end } else { start + 2 };
+        } else {
+            i += 1;
+        }
+    }
+    
+    // Sort by size descending
+    candidates.sort_by(|a, b| b.2.cmp(&a.2));
+    log::info!("Found {} NEF-specific JPEG candidates", candidates.len());
+    candidates
+}
+
 // Shared function for RAW to RGB JPEG (for both thumbnail and preview)
 pub fn convert_raw_to_rgb_jpeg(
     file_path: &str,
@@ -125,10 +262,19 @@ pub fn convert_raw_to_rgb_jpeg(
         })?;
     log::debug!("Successfully read RAW file, size: {} bytes", file_data.len());
 
-    // Check if this is a RAF file and try RAF-specific extraction first
-    let is_raf = file_path.to_lowercase().ends_with(".raf");
-    let candidates = if is_raf {
-        log::info!("Detected RAF file, trying RAF-specific extraction first");
+    // Determine file type and use appropriate extraction method
+    let file_path_lower = file_path.to_lowercase();
+    let candidates = if file_path_lower.ends_with(".nef") {
+        log::info!("Detected NEF file, using NEF-specific extraction");
+        let nef_candidates = find_nef_jpegs(&file_data);
+        if !nef_candidates.is_empty() {
+            nef_candidates
+        } else {
+            log::warn!("NEF-specific extraction found no candidates, falling back to generic method");
+            find_jpegs(&file_data)
+        }
+    } else if file_path_lower.ends_with(".raf") {
+        log::info!("Detected RAF file, using RAF-specific extraction");
         let raf_candidates = find_raf_jpegs(&file_data);
         if !raf_candidates.is_empty() {
             raf_candidates
@@ -137,6 +283,7 @@ pub fn convert_raw_to_rgb_jpeg(
             find_jpegs(&file_data)
         }
     } else {
+        log::info!("Using generic JPEG extraction for: {}", file_path);
         find_jpegs(&file_data)
     };
     
