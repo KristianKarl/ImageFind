@@ -21,7 +21,7 @@ async fn main() -> std::io::Result<()> {
     let port = cli::CLI_ARGS.get().unwrap().port;
 
     background::start_background_thumbnail_worker();
-    background::start_secondary_worker();
+    background::start_background_preview_worker();
 
     HttpServer::new(|| {
         App::new()
