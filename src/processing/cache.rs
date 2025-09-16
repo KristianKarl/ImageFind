@@ -149,3 +149,10 @@ pub fn save_full_image_to_cache(cache_key: &str, image_bytes: &[u8]) -> io::Resu
         }
     }
 }
+
+// Function to check if a thumbnail exists in the cache
+pub fn thumbnail_exists_in_cache(cache_key: &str) -> bool {
+    let cache_dir = get_cache_dir();
+    let cache_file = cache_dir.join(format!("{}.jpg", cache_key));
+    cache_file.exists()
+}
