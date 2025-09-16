@@ -21,6 +21,7 @@ This tool will enable you to quickly find and view any image or video in your co
 - Keyboard-friendly modal with navigation and rotation (images)
 - Video preview and playback in modal using HTML5 `<video>` element
 - Video preview uses pre-transcoded files from a dedicated cache directory
+- Enhanced RAW file support including improved Fujifilm RAF extraction
 - Basic path security checks
 - Configurable webserver port via CLI
 
