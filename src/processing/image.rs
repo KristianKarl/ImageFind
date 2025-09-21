@@ -41,44 +41,12 @@ pub fn generate_thumbnail(file_path: &str) -> Option<String> {
             "nef" | "cr2" | "cr3" | "arw" | "orf" | "rw2" | "raf" | "dng" => {
                 log::info!("Processing RAW file thumbnail: {}", file_path);
                 
-                // Try the rawloader handler with RGB processing
                 if let Some(result) = generate_raw_thumbnail(file_path) {
                     log::info!("Successfully generated RAW thumbnail using rawloader");
                     return Some(result);
-                }
-                
-                // If rawloader fails, fallback to standard processing
-                log::warn!("RAW rawloader processing failed, falling back to standard image crate for: {}", file_path);
-                match image::open(path) {
-                    Ok(img) => {
-                        let (original_width, original_height) = (img.width(), img.height());
-                        log::debug!("Fallback processing for RAW, original dimensions: {}x{}", original_width, original_height);
-                        
-                        let thumbnail = if original_width > 2000 || original_height > 2000 {
-                            log::trace!("Large RAW image, using progressive scaling");
-                            let intermediate = img.resize(800, 800, image::imageops::FilterType::Triangle);
-                            intermediate.resize(200, 200, image::imageops::FilterType::CatmullRom)
-                        } else {
-                            log::trace!("Small RAW image, direct scaling");
-                            img.resize(200, 200, image::imageops::FilterType::CatmullRom)
-                        };
-
-                        let mut jpeg_bytes = Vec::new();
-                        if thumbnail.write_with_encoder(
-                            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg_bytes, 50)
-                        ).is_ok() {
-                            let base64_result = BASE64.encode(&jpeg_bytes);
-                            let cache_key = generate_cache_key(file_path);
-                            let _ = save_thumbnail_to_cache(&cache_key, &jpeg_bytes);
-                            log::info!("Successfully generated RAW thumbnail using fallback method");
-                            return Some(base64_result);
-                        }
-                        None
-                    }
-                    Err(e) => {
-                        log::error!("Standard image processing also failed for RAW {}: {:?}", file_path, e);
-                        None
-                    }
+                } else {
+                    log::error!("RAW thumbna processing failed: {}", file_path);
+                    return None;
                 }
             }
             // TIFF files - use specialized tiff crate

@@ -2,6 +2,8 @@
 
 ImageFind is a Rust (Actix Web) app that scans XMP sidecar files, indexes useful metadata in SQLite, and serves a searchable UI with on-demand thumbnails and previews for images and videos.
 
+#codebase
+
 The project is created mainly by prompting/Github Copilot using Visual Code.
 
 ## Use case
@@ -47,7 +49,13 @@ This tool will enable you to quickly find and view any image or video in your co
 
 ### Usage
 
-To be able to create thumbnails and previews from videos, ffmpeg needs to be installed (for manual transcoding).
+Runtime tools required:
+- exiv2 (for RAW preview/thumbnail extraction)
+- ffmpeg (for video thumbnails and manual transcoding)
+
+Quick checks:
+- `exiv2 --version`
+- `ffmpeg -version`
 
 ```
 imagefind --scan-dir <DIR> --db-path <FILE> --thumbnail-cache <DIR> --full-image-cache <DIR> --video_preview-cache <DIR> [--port <PORT>]
@@ -196,6 +204,7 @@ Then move `output_480p.mp4` to your `video_preview_cache` directory.
 - Media-serving routes apply basic path traversal prevention.
 - Ensure the process can read the media files you reference.
 - Video previews require manual transcoding to `_480p.mp4` files and placement in the cache directory.
+ - RAW previews and thumbnails use exiv2 when available; if missing, the app falls back to embedded-JPEG extraction.
 
 - Closing the modal window stops video playback and audio.
 
