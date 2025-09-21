@@ -2,7 +2,6 @@ use std::fs::File;
 use image::{DynamicImage, RgbImage};
 use tiff;
 
-use super::cache::save_full_image_to_cache;
 
 // Shared function for TIFF to RGB JPEG (for both thumbnail and preview)
 pub fn convert_tiff_to_rgb_jpeg(
@@ -212,23 +211,30 @@ pub fn convert_tiff_to_rgb_jpeg(
     }
 }
 
-pub fn generate_tiff_preview(file_path: &str, cache_key: &str) -> Result<Vec<u8>, String> {
+pub fn generate_tiff_preview(file_path: &str) -> Option<String>  {
     log::info!("Generating TIFF preview for: {}", file_path);
     
-    let result = convert_tiff_to_rgb_jpeg(
+    let cache_key = super::cache::generate_cache_key(file_path);
+
+    match convert_tiff_to_rgb_jpeg(
         file_path,
         1980,
         60,
-        Some(cache_key),
-        Some(save_full_image_to_cache),
-    );
-    
-    match &result {
-        Ok(bytes) => log::info!("Successfully generated TIFF preview, size: {} bytes", bytes.len()),
-        Err(e) => log::error!("Failed to generate TIFF preview: {}", e),
+        Some(&cache_key),
+        Some(super::cache::save_preview_to_cache),
+    ) {
+        Ok(jpeg_bytes) => {
+            log::debug!("TIFF preview generation successful, encoding as base64");
+            
+            let base64_result = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &jpeg_bytes);
+            log::info!("Successfully generated TIFF preview, base64 length: {}", base64_result.len());
+            Some(base64_result)
+        }
+        Err(e) => {
+            log::error!("TIFF preview generation failed for {}: {}", file_path, e);
+            None
+        }
     }
-    
-    result
 }
 
 pub fn generate_tiff_thumbnail(file_path: &str) -> Option<String> {

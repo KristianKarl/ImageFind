@@ -2,16 +2,11 @@ use actix_web::{web, HttpResponse, Responder};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::collections::HashMap;
 use urlencoding;
 use crate::cli::get_cli_args;
 
 use crate::processing::{
-    cache::{generate_cache_key, get_cached_full_image, save_full_image_to_cache},
-    image::{generate_external_preview, generate_thumbnail},
-    raw::generate_raw_preview,
-    tiff::generate_tiff_preview,
-    video::generate_video_thumbnail,
+    image::{generate_thumbnail, generate_preview},
 };
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use once_cell::sync::Lazy;
@@ -507,7 +502,7 @@ pub async fn get_thumbnail(path: web::Path<String>) -> impl Responder {
     }).await
 }
 
-pub async fn serve_image(path: web::Path<String>, query: web::Query<HashMap<String, String>>) -> impl Responder {
+pub async fn get_preview(path: web::Path<String>) -> impl Responder {
     with_user_activity(|| async move {
         let image_path = path.into_inner();
         log::info!("Image serve request for: {}", image_path);
@@ -536,183 +531,38 @@ pub async fn serve_image(path: web::Path<String>, query: web::Query<HashMap<Stri
             log::warn!("Path is not a file: {}", clean_path);
             return HttpResponse::BadRequest().body("Path is not a file");
         }
-        
-        // Generate cache key for this image
-        let cache_key = generate_cache_key(&clean_path);
-        log::trace!("Generated cache key: {}", cache_key);
-        
-        // Check if this is a cache-busting request (has timestamp parameter)
-        let is_cache_bust = query.contains_key("t");
-        if is_cache_bust {
-            log::debug!("Cache-busting request detected for: {}", clean_path);
-        }
-        
-        // Check cache first (skip cache if cache-busting)
-        if !is_cache_bust {
-            if let Some(cached_image) = get_cached_full_image(&cache_key) {
-                log::debug!("Serving cached image for: {}", clean_path);
-                return HttpResponse::Ok()
-                    .content_type("image/jpeg")
-                    .append_header(("Cache-Control", "public, max-age=3600"))
-                    .body(cached_image);
-            }
-            log::trace!("No cached image found for: {}", clean_path);
-        }
-        
-        // Determine file type before the closure
-        let is_video = match safe_path.extension().and_then(|ext| ext.to_str()) {
-            Some(ext) => {
-                let ext_lower = ext.to_lowercase();
-                match ext_lower.as_str() {
-                    "mp4" | "avi" | "mov" | "wmv" | "flv" | 
-                    "webm" | "mkv" | "m4v" | "3gp" | "ogv" => true,
-                    _ => false,
-                }
-            }
-            _ => false,
-        };
-        
-        let is_raw = match safe_path.extension().and_then(|ext| ext.to_str()) {
-            Some(ext) => {
-                let ext_lower = ext.to_lowercase();
-                match ext_lower.as_str() {
-                    "nef" | "cr2" | "cr3" | "arw" | "orf" | "rw2" | "raf" | "dng" | 
-                    "3fr" | "ari" | "bay" | "crw" | "dcr" | "erf" | "fff" | "iiq" | 
-                    "k25" | "kdc" | "mdc" | "mos" | "mrw" | "pef" | "ptx" | "pxn" | 
-                    "r3d" | "rwl" | "sr2" | "srf" | "srw" | "x3f" => true,
-                    _ => false,
-                }
-            }
-            _ => false,
-        };
-        
-        log::debug!("Processing image file: {} (is_video: {}, is_raw: {})", clean_path, is_video, is_raw);
-        
-        // Clone the path for the closure
-        let image_path_for_closure = clean_path.clone();
-        
-        // Process the image synchronously to ensure it's ready before the response
-        let processed_image = tokio::task::spawn_blocking(move || {
-            log::trace!("Starting image processing task for: {}", image_path_for_closure);
-            
-            // Try to read and process the image file
-            match std::fs::read(&image_path_for_closure) {
-                Ok(image_data) => {
-                    log::debug!("Successfully read image data, size: {} bytes", image_data.len());
-                    
-                    if is_video {
-                        log::debug!("Processing video thumbnail for: {}", image_path_for_closure);
-                        // For videos, try to use the existing thumbnail generation
-                        if let Some(thumbnail_base64) = generate_video_thumbnail(&image_path_for_closure) {
-                            if let Ok(thumbnail_bytes) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &thumbnail_base64) {
-                                // Scale up the thumbnail to a reasonable preview size
-                                if let Ok(img) = image::load_from_memory(&thumbnail_bytes) {
-                                    let preview = img.resize(
-                                        800, 
-                                        800, 
-                                        image::imageops::FilterType::CatmullRom // Faster algorithm
-                                    );
-                                    let mut jpeg_bytes = Vec::new();
-                                    if preview.write_with_encoder(
-                                        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg_bytes, 50) // Lower quality for speed
-                                    ).is_ok() {
-                                        // Save to cache
-                                        let _ = save_full_image_to_cache(&cache_key, &jpeg_bytes);
-                                        return Ok(jpeg_bytes);
-                                    }
-                                }
-                            }
-                        }
-                        return Err("Video preview not available".to_string());
-                    }
-                    
-                    // Check if this is a RAW file and try rawloader with RGB demosaicing
-                    let path_lower = image_path_for_closure.to_lowercase();
-                    if path_lower.ends_with(".nef") || path_lower.ends_with(".cr2") || path_lower.ends_with(".cr3") || 
-                       path_lower.ends_with(".arw") || path_lower.ends_with(".orf") || path_lower.ends_with(".rw2") || 
-                       path_lower.ends_with(".raf") || path_lower.ends_with(".dng") {
-                        log::info!("Detected RAW file for preview processing: {}", image_path_for_closure);
-                        
-                        // Try rawloader with RGB demosaicing first
-                        match generate_raw_preview(&image_path_for_closure, &cache_key) {
-                            Ok(jpeg_bytes) => {
-                                log::info!("Successfully processed RAW preview with rawloader RGB demosaicing");
-                                return Ok(jpeg_bytes);
-                            }
-                            Err(e) => {
-                                log::warn!("RAW rawloader processing failed, falling back to standard: {} - {}", image_path_for_closure, e);
-                                // Continue to standard processing below
-                            }
-                        }
-                    }
-                    
-                    // Check if this is a TIFF file and try specialized handling first
-                    if path_lower.ends_with(".tiff") || path_lower.ends_with(".tif") {
-                        log::info!("Detected TIFF file for preview processing: {}", image_path_for_closure);
-                        match generate_tiff_preview(&image_path_for_closure, &cache_key) {
-                            Ok(jpeg_bytes) => {
-                                log::info!("Successfully processed TIFF preview with tiff crate");
-                                return Ok(jpeg_bytes);
-                            }
-                            Err(e) => {
-                                log::warn!("TIFF specialized processing failed, falling back to standard: {} - {}", image_path_for_closure, e);
-                                // Continue to standard processing below
-                            }
-                        }
-                    }
-                    
 
-                    match image_path_for_closure.split('.').last().unwrap_or("").to_lowercase().as_str() {
-                        "jpg" | "jpeg" | "png" | "gif" | "bmp" | "webp" => {
-                            generate_external_preview(&image_path_for_closure, &cache_key)
-                        }
-                        _ => {
-                            // If image processing fails completely, try to return original as fallback
-                            // but only for smaller files to avoid memory issues
-                            if image_data.len() < 50_000_000 { // 50MB limit
-                                Ok(image_data)
-                            } else {
-                                Err("Image too large and processing failed".to_string())
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    log::error!("Failed to read image file {}: {}", image_path_for_closure, e);
-                    Err("Image file not found".to_string())
-                }
-            }
+         let image_path_for_closure = clean_path.clone();
+        
+        // Generate preview in a blocking task
+        let preview_result = tokio::task::spawn_blocking(move || {
+            generate_preview(&image_path_for_closure)
         }).await;
         
-        match processed_image {
-            Ok(Ok(jpeg_bytes)) => {
-                log::info!("Successfully processed image: {}, final size: {} bytes", clean_path, jpeg_bytes.len());
-                // Add cache headers based on whether this is a cache-busting request
-                if is_cache_bust {
-                    HttpResponse::Ok()
-                        .content_type("image/jpeg")
-                        .append_header(("Cache-Control", "no-cache, must-revalidate"))
-                        .body(jpeg_bytes)
-                } else {
-                    HttpResponse::Ok()
-                        .content_type("image/jpeg")
-                        .append_header(("Cache-Control", "public, max-age=3600"))
-                        .body(jpeg_bytes)
-                }
+        match preview_result {
+            Ok(Some(preview_base64)) => {
+                log::debug!("Successfully generated preview for: {}", clean_path);
+                HttpResponse::Ok().json(serde_json::json!({
+                    "preview": preview_base64,
+                    "file_path": clean_path
+                }))
             }
-            Ok(Err(error_msg)) => {
-                log::error!("Image processing error for {}: {}", clean_path, error_msg);
-                HttpResponse::InternalServerError()
-                    .content_type("text/plain")
-                    .body(format!("Image processing failed: {}", error_msg))
+            Ok(None) => {
+                log::warn!("Could not generate preview for: {}", clean_path);
+                HttpResponse::Ok().json(serde_json::json!({
+                    "preview": null,
+                    "file_path": clean_path
+                }))
             }
             Err(e) => {
-                log::error!("Task execution error for image {}: {:?}", clean_path, e);
-                HttpResponse::InternalServerError()
-                    .content_type("text/plain")
-                    .body("Internal processing error".to_string())
+                log::error!("Preview generation task failed for {}: {:?}", clean_path, e);
+                HttpResponse::InternalServerError().json(serde_json::json!({
+                    "error": "Failed to generate preview",
+                    "file_path": clean_path
+                }))
             }
         }
+
     }).await
 }
 

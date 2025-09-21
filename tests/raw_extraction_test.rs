@@ -124,40 +124,57 @@ mod tests {
                 }
             }
 
-            // Preview generation
-            match generate_raw_preview(&test_file, "test_preview_cache_key") {
-                Ok(preview_jpeg_bytes) => {
+            // Thumbnail generation
+            match generate_raw_preview(&test_file) {
+                Some(preview_base64) => {
                     println!(
-                        "Successfully generated preview JPEG: {} bytes",
-                        preview_jpeg_bytes.len()
+                        "Successfully generated preview, base64 length: {}",
+                        preview_base64.len()
                     );
 
-                    // Try to load the JPEG to verify it's valid
-                    match image::load_from_memory(&preview_jpeg_bytes) {
-                        Ok(img) => {
-                            let (w, h) = (img.width(), img.height());
-                            println!("Valid preview image: {}x{} pixels", w, h);
+                    // Decode the base64 to verify it's a valid JPEG
+                    match base64::Engine::decode(
+                        &base64::engine::general_purpose::STANDARD,
+                        &preview_base64,
+                    ) {
+                        Ok(jpeg_bytes) => {
+                            println!("Decoded preview JPEG: {} bytes", jpeg_bytes.len());
 
-                            // Save test output for verification per file
-                            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("out");
-                            let output_path = format!("test_output_{}_preview.jpg", stem);
-                            if let Err(e) = img.save(&output_path) {
-                                println!("Failed to save test output: {}", e);
-                            } else {
-                                println!("Saved test output to: {}", output_path);
+                            // Try to load the JPEG to verify it's valid
+                            match image::load_from_memory(&jpeg_bytes) {
+                                Ok(img) => {
+                                    let (w, h) = (img.width(), img.height());
+                                    println!("Valid preview image: {}x{} pixels", w, h);
+
+                                    // Save test output for verification per file
+                                    let stem =
+                                        path.file_stem().and_then(|s| s.to_str()).unwrap_or("out");
+                                    let output_path = format!("test_output_{}_preview.jpg", stem);
+                                    if let Err(e) = img.save(&output_path) {
+                                        println!("Failed to save test output: {}", e);
+                                    } else {
+                                        println!("Saved test output to: {}", output_path);
+                                    }
+
+                                    assert!(
+                                        w > 0 && h > 0,
+                                        "Generated preview has invalid dimensions"
+                                    );
+                                }
+                                Err(e) => {
+                                    panic!("Generated preview is not a valid image: {}", e);
+                                }
                             }
-
-                            assert!(w > 0 && h > 0, "Generated preview has invalid dimensions");
                         }
                         Err(e) => {
-                            panic!("Generated preview is not a valid image: {}", e);
+                            panic!("Failed to decode base64 preview: {}", e);
                         }
                     }
                 }
-                Err(e) => {
+                None => {
                     panic!(
-                        "Failed to generate preview from RAW file using actual codebase functions: {} ({})",
-                        test_file, e
+                        "Failed to generate preview from RAW file using actual codebase functions: {}",
+                        test_file
                     );
                 }
             }

@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::cache::{generate_cache_key, save_thumbnail_to_cache, save_full_image_to_cache};
+use super::cache::{generate_cache_key, save_thumbnail_to_cache, save_preview_to_cache};
 
 // Try to extract the best available preview from a RAW file using exiv2
 // Returns raw JPEG bytes of the largest extracted preview.
@@ -111,22 +111,26 @@ fn scale_jpeg_bytes(jpeg: &[u8], max_dimension: u32, jpeg_quality: u8) -> Result
     Ok(out)
 }
 
-pub fn generate_raw_preview(file_path: &str, cache_key: &str) -> Result<Vec<u8>, String> {
+pub fn generate_raw_preview(file_path: &str) -> Option<String> {
     log::info!("Generating RAW preview for: {}", file_path);
+
+    let cache_key = generate_cache_key(file_path);
 
     // First try exiv2-based extraction
     match exiv2_extract_best_preview(file_path)
         .and_then(|bytes| scale_jpeg_bytes(&bytes, 1980, 60))
     {
         Ok(jpeg_bytes) => {
-            if let Err(e) = save_full_image_to_cache(cache_key, &jpeg_bytes) {
+            if let Err(e) = save_preview_to_cache(&cache_key, &jpeg_bytes) {
                 log::warn!("Failed to cache exiv2 preview: {}", e);
             }
-            log::info!("Successfully generated RAW preview via exiv2 ({} bytes)", jpeg_bytes.len());
-            return Ok(jpeg_bytes);
+            let base64_result = BASE64.encode(&jpeg_bytes);
+            log::info!("Successfully generated RAW preview via exiv2, base64 length: {}", base64_result.len());
+            return Some(base64_result);
         }
         Err(e) => {
-            Err(format!("exiv2 preview failed: {}", e))
+            log::error!("exiv2 preview failed for {}: {}", file_path, e);
+            None
         }
     }
 }

@@ -107,7 +107,7 @@ pub fn save_thumbnail_to_cache(cache_key: &str, jpeg_bytes: &[u8]) -> io::Result
 }
 
 // Function to get cached full image from disk
-pub fn get_cached_full_image(cache_key: &str) -> Option<Vec<u8>> {
+pub fn get_cached_preview(cache_key: &str) -> Option<String> {
     let cache_dir = get_full_image_cache_dir();
     let cache_file = cache_dir.join(format!("{}.jpg", cache_key));
     
@@ -118,7 +118,7 @@ pub fn get_cached_full_image(cache_key: &str) -> Option<Vec<u8>> {
         match fs::read(&cache_file) {
             Ok(bytes) => {
                 log::debug!("Successfully read cached full image, size: {} bytes", bytes.len());
-                Some(bytes)
+                Some(base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes))
             },
             Err(e) => {
                 log::warn!("Failed to read cached full image {}: {}", cache_file.display(), e);
@@ -132,19 +132,19 @@ pub fn get_cached_full_image(cache_key: &str) -> Option<Vec<u8>> {
 }
 
 // Function to save full image to disk cache
-pub fn save_full_image_to_cache(cache_key: &str, image_bytes: &[u8]) -> io::Result<()> {
+pub fn save_preview_to_cache(cache_key: &str, image_bytes: &[u8]) -> io::Result<()> {
     let cache_dir = get_full_image_cache_dir();
     let cache_file = cache_dir.join(format!("{}.jpg", cache_key));
-    
-    log::debug!("Saving full image to cache: {} ({} bytes)", cache_file.display(), image_bytes.len());
-    
+
+    log::debug!("Saving preview to cache: {} ({} bytes)", cache_file.display(), image_bytes.len());
+
     match fs::write(&cache_file, image_bytes) {
         Ok(_) => {
-            log::trace!("Successfully saved full image to cache: {}", cache_file.display());
+            log::trace!("Successfully saved preview to cache: {}", cache_file.display());
             Ok(())
         },
         Err(e) => {
-            log::error!("Failed to save full image to cache {}: {}", cache_file.display(), e);
+            log::error!("Failed to save preview to cache {}: {}", cache_file.display(), e);
             Err(e)
         }
     }

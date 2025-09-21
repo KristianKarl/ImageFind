@@ -121,10 +121,15 @@ pub fn start_background_preview_worker() {
                         let file_path = file_path.strip_suffix(".xmp").unwrap_or(&file_path);
                         let cache_key = crate::processing::cache::generate_cache_key(file_path);
                         // Only generate if not already cached
-                        if crate::processing::cache::get_cached_full_image(&cache_key).is_none() {
-                            log::info!("Preview worker: generating full-size preview for {}", file_path);
-                            let _ = crate::processing::image::process_preview_with_image_crate(file_path, &cache_key);
-                            std::thread::sleep(std::time::Duration::from_millis(200));
+                        if crate::processing::cache::get_cached_preview(&cache_key).is_none() {
+                            log::info!("Background worker: generating thumbnail for {}", file_path);
+                            let result = crate::processing::image::generate_preview(&file_path);
+                            if result.is_none() {
+                                log::error!("Failed to generate previe for {}", file_path);
+                            } else {
+                                log::debug!("Successfully generated previe for {}", file_path);
+                            }
+                            thread::sleep(Duration::from_millis(100));
                         } else {
                             log::trace!("Preview already cached for {}", file_path);
                         }

@@ -29,7 +29,7 @@ async fn main() -> std::io::Result<()> {
             .route("/health_check", web::get().to(routes::health_check))
             .route("/search", web::get().to(routes::search_page))
             .route("/api", web::get().to(routes::api_search))
-            .route("/image/{path:.*}", web::get().to(routes::serve_image))
+            .route("/image/{path:.*}", web::get().to(routes::get_preview))
             .route("/thumbnail/{path:.*}", web::get().to(routes::get_thumbnail))
             .route("/video/{path:.*}", web::get().to(routes::serve_video))
     })
