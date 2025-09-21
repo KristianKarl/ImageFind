@@ -512,7 +512,6 @@ pub async fn get_preview(path: web::Path<String>) -> impl Responder {
         let clean_path = decoded_path.to_string();
         log::debug!("Decoded path: {}", clean_path);
         
-        // Handle absolute paths by making them relative to current directory or accepting them if they're in allowed directories
         let safe_path = Path::new(&clean_path);
         
         // Security check - prevent path traversal but allow absolute paths in safe directories
@@ -532,7 +531,7 @@ pub async fn get_preview(path: web::Path<String>) -> impl Responder {
             return HttpResponse::BadRequest().body("Path is not a file");
         }
 
-         let image_path_for_closure = clean_path.clone();
+        let image_path_for_closure = clean_path.clone();
         
         // Generate preview in a blocking task
         let preview_result = tokio::task::spawn_blocking(move || {
@@ -542,10 +541,18 @@ pub async fn get_preview(path: web::Path<String>) -> impl Responder {
         match preview_result {
             Ok(Some(preview_base64)) => {
                 log::debug!("Successfully generated preview for: {}", clean_path);
-                HttpResponse::Ok().json(serde_json::json!({
-                    "preview": preview_base64,
-                    "file_path": clean_path
-                }))
+                // Decode base64 to bytes before returning as image/jpeg
+                match base64::decode(&preview_base64) {
+                    Ok(jpeg_bytes) => {
+                        HttpResponse::Ok()
+                            .content_type("image/jpeg")
+                            .body(jpeg_bytes)
+                    }
+                    Err(e) => {
+                        log::error!("Failed to decode base64 preview for {}: {:?}", clean_path, e);
+                        HttpResponse::InternalServerError().body("Failed to decode preview image")
+                    }
+                }
             }
             Ok(None) => {
                 log::warn!("Could not generate preview for: {}", clean_path);
