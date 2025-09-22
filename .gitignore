@@ -22,3 +22,6 @@ images/
 
 # log files
 *.log
+
+# .github
+.github/
