@@ -2,7 +2,6 @@ use actix_web::{web, HttpResponse, Responder};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use urlencoding;
 use crate::cli::get_cli_args;
 use base64::{Engine as _, engine::{general_purpose}};
 
@@ -74,7 +73,7 @@ fn highlight_search_terms(text: &str, search_term: &str) -> String {
                 
                 // Add highlighted match
                 let match_text = &remaining[pos..pos + term.len()];
-                result.push_str(&format!("<mark style=\"background-color: lightgreen; padding: 1px 2px; border-radius: 2px;\">{}</mark>", match_text));
+                result.push_str(&format!("<mark style=\"background-color: lightgreen; padding: 1px 2px; border-radius: 2px;\">{match_text}</mark>"));
                 
                 // Move to text after the match
                 remaining = &remaining[pos + term.len()..];
@@ -115,8 +114,7 @@ fn parse_search_query(search_term: &str) -> (String, Vec<String>) {
     for (i, term) in terms.iter().enumerate() {
         let param_num = i + 1;
         where_conditions.push(format!(
-            "file.id IN (SELECT DISTINCT kv{}.file_id FROM key_value kv{} WHERE kv{}.value LIKE ?{})",
-            param_num, param_num, param_num, param_num
+            "file.id IN (SELECT DISTINCT kv{param_num}.file_id FROM key_value kv{param_num} WHERE kv{param_num}.value LIKE ?{param_num})"
         ));
         parameters.push(format!("%{}%", term.trim()));
     }
@@ -130,9 +128,9 @@ fn parse_search_terms(input: &str) -> Vec<String> {
     let mut terms = Vec::new();
     let mut current_term = String::new();
     let mut in_quotes = false;
-    let mut chars = input.chars().peekable();
+    let chars = input.chars().peekable();
     
-    while let Some(ch) = chars.next() {
+    for ch in chars {
         match ch {
             '"' => {
                 if in_quotes {
@@ -185,7 +183,7 @@ pub async fn index(query: web::Query<IndexQuery>) -> HttpResponse {
     // If there's a search query, show search results
     if let Some(search_term) = &query.search {
         if !search_term.is_empty() {
-            log::info!("Redirecting to search page for term: {}", search_term);
+            log::info!("Redirecting to search page for term: {search_term}");
             return search_page(query).await;
         }
     }
@@ -205,11 +203,11 @@ pub async fn health_check() -> impl Responder {
 
 pub async fn api_search(query: web::Query<IndexQuery>) -> impl Responder {
     let search_term = query.search.as_deref().unwrap_or("");
-    log::info!("API search called with term: '{}'", search_term);
+    log::info!("API search called with term: '{search_term}'");
     
     let (where_clause, parameters) = parse_search_query(search_term);
-    log::debug!("Generated SQL where clause: {}", where_clause);
-    log::debug!("Parameters: {:?}", parameters);
+    log::debug!("Generated SQL where clause: {where_clause}");
+    log::debug!("Parameters: {parameters:?}");
 
     let args = get_cli_args();
     let conn = match Connection::open(&args.db_path) {
@@ -219,7 +217,7 @@ pub async fn api_search(query: web::Query<IndexQuery>) -> impl Responder {
         },
         Err(e) => {
             log::error!("Failed to open database {}: {}", args.db_path, e);
-            return HttpResponse::InternalServerError().body(format!("DB open error: {}", e));
+            return HttpResponse::InternalServerError().body(format!("DB open error: {e}"));
         },
     };
 
@@ -227,13 +225,13 @@ pub async fn api_search(query: web::Query<IndexQuery>) -> impl Responder {
         &format!("SELECT file.path, key_value.value \
          FROM key_value \
          JOIN file ON key_value.file_id = file.id \
-         {} \
-         ORDER BY file.path ASC", where_clause)
+         {where_clause} \
+         ORDER BY file.path ASC")
     ) {
         Ok(s) => s,
         Err(e) => {
-            log::error!("SQL preparation error: {}", e);
-            return HttpResponse::InternalServerError().body(format!("Prepare error: {}", e));
+            log::error!("SQL preparation error: {e}");
+            return HttpResponse::InternalServerError().body(format!("Prepare error: {e}"));
         },
     };
 
@@ -244,7 +242,7 @@ pub async fn api_search(query: web::Query<IndexQuery>) -> impl Responder {
             // Remove ".xmp" suffix if present
             let file_path = file_path.strip_suffix(".xmp").unwrap_or(&file_path).to_string();
             
-            log::trace!("Processing result: {}", file_path);
+            log::trace!("Processing result: {file_path}");
             // Generate thumbnail for the image
             let thumbnail_base64 = generate_thumbnail(&file_path);
             
@@ -258,15 +256,15 @@ pub async fn api_search(query: web::Query<IndexQuery>) -> impl Responder {
                 match row {
                     Ok(result) => results.push(result),
                     Err(e) => {
-                        log::error!("Row processing error: {}", e);
-                        return HttpResponse::InternalServerError().body(format!("Row error: {}", e));
+                        log::error!("Row processing error: {e}");
+                        return HttpResponse::InternalServerError().body(format!("Row error: {e}"));
                     },
                 }
             }
         }
         Err(e) => {
-            log::error!("Query execution error: {}", e);
-            return HttpResponse::InternalServerError().body(format!("Query error: {}", e));
+            log::error!("Query execution error: {e}");
+            return HttpResponse::InternalServerError().body(format!("Query error: {e}"));
         },
     }
 
@@ -276,18 +274,18 @@ pub async fn api_search(query: web::Query<IndexQuery>) -> impl Responder {
     match serde_json::to_string(&results) {
         Ok(json) => HttpResponse::Ok().content_type("application/json").body(json),
         Err(e) => {
-            log::error!("JSON serialization error: {}", e);
-            HttpResponse::InternalServerError().body(format!("Serialization error: {}", e))
+            log::error!("JSON serialization error: {e}");
+            HttpResponse::InternalServerError().body(format!("Serialization error: {e}"))
         },
     }
 }
 
 pub async fn search_page(query: web::Query<IndexQuery>) -> HttpResponse {
     let search_term = query.search.as_deref().unwrap_or("");
-    log::info!("Search page called with term: '{}'", search_term);
+    log::info!("Search page called with term: '{search_term}'");
     
     let (where_clause, parameters) = parse_search_query(search_term);
-    log::debug!("Generated SQL where clause: {}", where_clause);
+    log::debug!("Generated SQL where clause: {where_clause}");
 
     let args = get_cli_args();
     let conn = match Connection::open(&args.db_path) {
@@ -297,7 +295,7 @@ pub async fn search_page(query: web::Query<IndexQuery>) -> HttpResponse {
         },
         Err(e) => {
             log::error!("Failed to open database {}: {}", args.db_path, e);
-            return HttpResponse::InternalServerError().body(format!("DB open error: {}", e));
+            return HttpResponse::InternalServerError().body(format!("DB open error: {e}"));
         },
     };
 
@@ -306,13 +304,13 @@ pub async fn search_page(query: web::Query<IndexQuery>) -> HttpResponse {
         &format!("SELECT DISTINCT file.id, file.path \
          FROM key_value \
          JOIN file ON key_value.file_id = file.id \
-         {} \
-         ORDER BY file.path ASC", where_clause)
+         {where_clause} \
+         ORDER BY file.path ASC")
     ) {
         Ok(s) => s,
         Err(e) => {
-            log::error!("SQL preparation error for search: {}", e);
-            return HttpResponse::InternalServerError().body(format!("Prepare error: {}", e));
+            log::error!("SQL preparation error for search: {e}");
+            return HttpResponse::InternalServerError().body(format!("Prepare error: {e}"));
         },
     };
 
@@ -334,15 +332,15 @@ pub async fn search_page(query: web::Query<IndexQuery>) -> HttpResponse {
                         file_results.push((file_id, clean_path));
                     },
                     Err(e) => {
-                        log::error!("Row processing error in search: {}", e);
-                        return HttpResponse::InternalServerError().body(format!("Row error: {}", e));
+                        log::error!("Row processing error in search: {e}");
+                        return HttpResponse::InternalServerError().body(format!("Row error: {e}"));
                     },
                 }
             }
         }
         Err(e) => {
-            log::error!("Query execution error in search: {}", e);
-            return HttpResponse::InternalServerError().body(format!("Query error: {}", e));
+            log::error!("Query execution error in search: {e}");
+            return HttpResponse::InternalServerError().body(format!("Query error: {e}"));
         },
     }
 
@@ -357,7 +355,7 @@ pub async fn search_page(query: web::Query<IndexQuery>) -> HttpResponse {
         ) {
             Ok(s) => s,
             Err(e) => {
-                log::error!("Failed to prepare metadata query: {}", e);
+                log::error!("Failed to prepare metadata query: {e}");
                 continue;
             }
         };
@@ -379,13 +377,13 @@ pub async fn search_page(query: web::Query<IndexQuery>) -> HttpResponse {
                             }
                         },
                         Err(e) => {
-                            log::warn!("Error reading metadata value for file_id {}: {}", file_id, e);
+                            log::warn!("Error reading metadata value for file_id {file_id}: {e}");
                         }
                     }
                 }
             }
             Err(e) => {
-                log::error!("Metadata query error for file_id {}: {}", file_id, e);
+                log::error!("Metadata query error for file_id {file_id}: {e}");
             }
         }
 
@@ -401,7 +399,7 @@ pub async fn search_page(query: web::Query<IndexQuery>) -> HttpResponse {
     let escaped_search_term = html_escape(search_term);
     header_html = header_html.replace(
         r#"<input type="text" name="search" class="search-input" placeholder="Search images..." value="" />"#,
-        &format!(r#"<input type="text" name="search" class="search-input" placeholder="Search images..." value="{}" />"#, escaped_search_term)
+        &format!(r#"<input type="text" name="search" class="search-input" placeholder="Search images..." value="{escaped_search_term}" />"#)
     );
     html_parts.push(header_html);
 
@@ -425,20 +423,20 @@ pub async fn search_page(query: web::Query<IndexQuery>) -> HttpResponse {
         let encoded_path = urlencoding::encode(&file_path);
         
         let item_html = format!(r#"
-        <div class="result-item" data-file-path="{}">
+        <div class="result-item" data-file-path="{encoded_path}">
             <div>
                 <div class="thumbnail-container">
                     <div class="thumbnail-placeholder">
                         <div class="loading-spinner"></div>
                         <div class="loading-text">Loading...</div>
                     </div>
-                    <img class="thumbnail" style="display: none;" alt="{}" onclick="openModal('/image/{}', '{}')" />
+                    <img class="thumbnail" style="display: none;" alt="{escaped_file_path}" onclick="openModal('/image/{js_safe_path}', '{js_safe_value}')" />
                 </div>
             </div>
-            <div class="file-path">{}</div>
-            <div class="value-text">{}</div>
+            <div class="file-path">{escaped_file_path}</div>
+            <div class="value-text">{combined_metadata}</div>
         </div>
-"#, encoded_path, escaped_file_path, js_safe_path, js_safe_value, escaped_file_path, combined_metadata);
+"#);
         html_parts.push(item_html);
     }
 
@@ -454,7 +452,7 @@ pub async fn search_page(query: web::Query<IndexQuery>) -> HttpResponse {
 pub async fn get_thumbnail(path: web::Path<String>) -> impl Responder {
     with_user_activity(|| async move {
         let image_path = path.into_inner();
-        log::debug!("Thumbnail request for: {}", image_path);
+        log::debug!("Thumbnail request for: {image_path}");
         
         // Decode URL-encoded path
         let decoded_path = urlencoding::decode(&image_path).unwrap_or_else(|_| image_path.clone().into());
@@ -462,7 +460,7 @@ pub async fn get_thumbnail(path: web::Path<String>) -> impl Responder {
         
         // Security check - prevent path traversal
         if clean_path.contains("..") {
-            log::warn!("Path traversal attempt blocked: {}", clean_path);
+            log::warn!("Path traversal attempt blocked: {clean_path}");
             return HttpResponse::BadRequest().json(serde_json::json!({
                 "error": "Invalid path: path traversal not allowed"
             }));
@@ -470,7 +468,7 @@ pub async fn get_thumbnail(path: web::Path<String>) -> impl Responder {
         
         // Remove ".xmp" suffix if present
         let file_path = clean_path.strip_suffix(".xmp").unwrap_or(&clean_path).to_string();
-        log::trace!("Processing thumbnail for cleaned path: {}", file_path);
+        log::trace!("Processing thumbnail for cleaned path: {file_path}");
         
         // Generate thumbnail in a blocking task
         let thumbnail_result = tokio::task::spawn_blocking(move || {
@@ -479,21 +477,21 @@ pub async fn get_thumbnail(path: web::Path<String>) -> impl Responder {
         
         match thumbnail_result {
             Ok(Some(thumbnail_base64)) => {
-                log::debug!("Successfully generated thumbnail for: {}", clean_path);
+                log::debug!("Successfully generated thumbnail for: {clean_path}");
                 HttpResponse::Ok().json(serde_json::json!({
                     "thumbnail": thumbnail_base64,
                     "file_path": clean_path
                 }))
             }
             Ok(None) => {
-                log::warn!("Could not generate thumbnail for: {}", clean_path);
+                log::warn!("Could not generate thumbnail for: {clean_path}");
                 HttpResponse::Ok().json(serde_json::json!({
                     "thumbnail": null,
                     "file_path": clean_path
                 }))
             }
             Err(e) => {
-                log::error!("Thumbnail generation task failed for {}: {:?}", clean_path, e);
+                log::error!("Thumbnail generation task failed for {clean_path}: {e:?}");
                 HttpResponse::InternalServerError().json(serde_json::json!({
                     "error": "Failed to generate thumbnail",
                     "file_path": clean_path
@@ -506,29 +504,29 @@ pub async fn get_thumbnail(path: web::Path<String>) -> impl Responder {
 pub async fn get_preview(path: web::Path<String>) -> impl Responder {
     with_user_activity(|| async move {
         let image_path = path.into_inner();
-        log::info!("Image serve request for: {}", image_path);
+        log::info!("Image serve request for: {image_path}");
         
         // Decode URL-encoded path
         let decoded_path = urlencoding::decode(&image_path).unwrap_or_else(|_| image_path.clone().into());
         let clean_path = decoded_path.to_string();
-        log::debug!("Decoded path: {}", clean_path);
+        log::debug!("Decoded path: {clean_path}");
         
         let safe_path = Path::new(&clean_path);
         
         // Security check - prevent path traversal but allow absolute paths in safe directories
         if clean_path.contains("..") {
-            log::warn!("Path traversal attempt blocked for image: {}", clean_path);
+            log::warn!("Path traversal attempt blocked for image: {clean_path}");
             return HttpResponse::BadRequest().body("Invalid path: path traversal not allowed");
         }
         
         // Additional security: ensure the path exists and is a file
         if !safe_path.exists() {
-            log::warn!("Image file not found: {}", clean_path);
+            log::warn!("Image file not found: {clean_path}");
             return HttpResponse::NotFound().body("Image file not found");
         }
         
         if !safe_path.is_file() {
-            log::warn!("Path is not a file: {}", clean_path);
+            log::warn!("Path is not a file: {clean_path}");
             return HttpResponse::BadRequest().body("Path is not a file");
         }
 
@@ -541,7 +539,7 @@ pub async fn get_preview(path: web::Path<String>) -> impl Responder {
         
         match preview_result {
             Ok(Some(preview_base64)) => {
-                log::debug!("Successfully generated preview for: {}", clean_path);
+                log::debug!("Successfully generated preview for: {clean_path}");
                 // Decode base64 to bytes before returning as image/jpeg
                 match general_purpose::STANDARD.decode(&preview_base64) {
                     Ok(jpeg_bytes) => {
@@ -550,20 +548,20 @@ pub async fn get_preview(path: web::Path<String>) -> impl Responder {
                             .body(jpeg_bytes)
                     }
                     Err(e) => {
-                        log::error!("Failed to decode base64 preview for {}: {:?}", clean_path, e);
+                        log::error!("Failed to decode base64 preview for {clean_path}: {e:?}");
                         HttpResponse::InternalServerError().body("Failed to decode preview image")
                     }
                 }
             }
             Ok(None) => {
-                log::warn!("Could not generate preview for: {}", clean_path);
+                log::warn!("Could not generate preview for: {clean_path}");
                 HttpResponse::Ok().json(serde_json::json!({
                     "preview": null,
                     "file_path": clean_path
                 }))
             }
             Err(e) => {
-                log::error!("Preview generation task failed for {}: {:?}", clean_path, e);
+                log::error!("Preview generation task failed for {clean_path}: {e:?}");
                 HttpResponse::InternalServerError().json(serde_json::json!({
                     "error": "Failed to generate preview",
                     "file_path": clean_path
@@ -578,7 +576,7 @@ pub async fn get_preview(path: web::Path<String>) -> impl Responder {
 pub async fn serve_video(path: web::Path<String>) -> impl Responder {
     with_user_activity(|| async move {
         let video_path = path.into_inner();
-        log::info!("Video preview request for: {}", video_path);
+        log::info!("Video preview request for: {video_path}");
 
         // Decode URL-encoded path
         let decoded_path = urlencoding::decode(&video_path).unwrap_or_else(|_| video_path.clone().into());
@@ -586,7 +584,7 @@ pub async fn serve_video(path: web::Path<String>) -> impl Responder {
 
         // Security check - prevent path traversal
         if clean_path.contains("..") {
-            log::warn!("Path traversal attempt blocked for video: {}", clean_path);
+            log::warn!("Path traversal attempt blocked for video: {clean_path}");
             return HttpResponse::BadRequest().body("Invalid path: path traversal not allowed");
         }
 
@@ -604,7 +602,7 @@ pub async fn serve_video(path: web::Path<String>) -> impl Responder {
             transcoded_file_name.push("_480p.mp4");
             preview_cache_dir.join(transcoded_file_name)
         } else {
-            log::warn!("Could not construct _480p filename for: {}", clean_path);
+            log::warn!("Could not construct _480p filename for: {clean_path}");
             return HttpResponse::NotFound().body("Invalid video path");
         };
 
@@ -626,7 +624,7 @@ pub async fn serve_video(path: web::Path<String>) -> impl Responder {
                 }
             }
             Err(e) => {
-                log::error!("Failed to open transcoded video file: {}", e);
+                log::error!("Failed to open transcoded video file: {e}");
             }
         }
         HttpResponse::InternalServerError().body("Failed to read transcoded video")

@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use image;
+    
     use std::fs;
     use std::path::Path;
     use walkdir::WalkDir;
@@ -13,7 +13,7 @@ mod tests {
     #[test]
     fn test_jpeg_extraction() {
         // Initialize app logging via CliArgs at TRACE level, and set test cache paths
-        let _ = (|| {
+        let _ = {
             let args = CliArgs {
                 db_path: "tests/tmp/test.sqlite".to_string(),
                 thumbnail_cache: "tests/tmp/thumb_cache".to_string(),
@@ -34,7 +34,7 @@ mod tests {
             let _ = CLI_ARGS.set(args.clone());
             init_logging(&args);
             Ok::<(), ()>(())
-        })();
+        };
 
         log::trace!("TRACE logging initialized for tests via CliArgs");
 
@@ -67,7 +67,7 @@ mod tests {
                 }
             };
             let test_file = abs_path.to_string_lossy().to_string();
-            println!("Testing JPEG extraction from: {}", test_file);
+            println!("Testing JPEG extraction from: {test_file}");
 
             // Thumbnail generation
             match generate_raw_thumbnail(&test_file) {
@@ -89,16 +89,16 @@ mod tests {
                             match image::load_from_memory(&jpeg_bytes) {
                                 Ok(img) => {
                                     let (w, h) = (img.width(), img.height());
-                                    println!("Valid thumbnail image: {}x{} pixels", w, h);
+                                    println!("Valid thumbnail image: {w}x{h} pixels");
 
                                     // Save test output for verification per file
                                     let stem =
                                         path.file_stem().and_then(|s| s.to_str()).unwrap_or("out");
-                                    let output_path = format!("test_output_{}_thumbnail.jpg", stem);
+                                    let output_path = format!("test_output_{stem}_thumbnail.jpg");
                                     if let Err(e) = img.save(&output_path) {
-                                        println!("Failed to save test output: {}", e);
+                                        println!("Failed to save test output: {e}");
                                     } else {
-                                        println!("Saved test output to: {}", output_path);
+                                        println!("Saved test output to: {output_path}");
                                     }
 
                                     assert!(
@@ -107,19 +107,18 @@ mod tests {
                                     );
                                 }
                                 Err(e) => {
-                                    panic!("Generated thumbnail is not a valid image: {}", e);
+                                    panic!("Generated thumbnail is not a valid image: {e}");
                                 }
                             }
                         }
                         Err(e) => {
-                            panic!("Failed to decode base64 thumbnail: {}", e);
+                            panic!("Failed to decode base64 thumbnail: {e}");
                         }
                     }
                 }
                 None => {
                     panic!(
-                        "Failed to generate thumbnail from RAW file using actual codebase functions: {}",
-                        test_file
+                        "Failed to generate thumbnail from RAW file using actual codebase functions: {test_file}"
                     );
                 }
             }
@@ -144,16 +143,16 @@ mod tests {
                             match image::load_from_memory(&jpeg_bytes) {
                                 Ok(img) => {
                                     let (w, h) = (img.width(), img.height());
-                                    println!("Valid preview image: {}x{} pixels", w, h);
+                                    println!("Valid preview image: {w}x{h} pixels");
 
                                     // Save test output for verification per file
                                     let stem =
                                         path.file_stem().and_then(|s| s.to_str()).unwrap_or("out");
-                                    let output_path = format!("test_output_{}_preview.jpg", stem);
+                                    let output_path = format!("test_output_{stem}_preview.jpg");
                                     if let Err(e) = img.save(&output_path) {
-                                        println!("Failed to save test output: {}", e);
+                                        println!("Failed to save test output: {e}");
                                     } else {
-                                        println!("Saved test output to: {}", output_path);
+                                        println!("Saved test output to: {output_path}");
                                     }
 
                                     assert!(
@@ -162,19 +161,18 @@ mod tests {
                                     );
                                 }
                                 Err(e) => {
-                                    panic!("Generated preview is not a valid image: {}", e);
+                                    panic!("Generated preview is not a valid image: {e}");
                                 }
                             }
                         }
                         Err(e) => {
-                            panic!("Failed to decode base64 preview: {}", e);
+                            panic!("Failed to decode base64 preview: {e}");
                         }
                     }
                 }
                 None => {
                     panic!(
-                        "Failed to generate preview from RAW file using actual codebase functions: {}",
-                        test_file
+                        "Failed to generate preview from RAW file using actual codebase functions: {test_file}"
                     );
                 }
             }
@@ -183,6 +181,6 @@ mod tests {
         }
 
         assert!(tested > 0, "No RAW files found in tests/data to test");
-        println!("All RAW extraction tests passed for {} files!", tested);
+        println!("All RAW extraction tests passed for {tested} files!");
     }
 }

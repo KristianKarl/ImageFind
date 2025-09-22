@@ -19,7 +19,7 @@ pub fn start_background_thumbnail_worker() {
         let conn = match Connection::open(&args.db_path) {
             Ok(c) => c,
             Err(e) => {
-                log::error!("Background worker: failed to open DB: {}", e);
+                log::error!("Background worker: failed to open DB: {e}");
                 return;
             }
         };
@@ -35,7 +35,7 @@ pub fn start_background_thumbnail_worker() {
             let mut stmt = match conn.prepare("SELECT path FROM file") {
                 Ok(s) => s,
                 Err(e) => {
-                    log::error!("Background worker: failed to prepare statement: {}", e);
+                    log::error!("Background worker: failed to prepare statement: {e}");
                     break;
                 }
             };
@@ -50,12 +50,12 @@ pub fn start_background_thumbnail_worker() {
                         let file_path = file_path.strip_suffix(".xmp").unwrap_or(&file_path).to_string();
                         let cache_key = crate::processing::cache::generate_cache_key(&file_path);
                         if !crate::processing::cache::thumbnail_exists_in_cache(&cache_key) {
-                            log::info!("Background worker: generating thumbnail for {}", file_path);
+                            log::info!("Background worker: generating thumbnail for {file_path}");
                             let result = crate::processing::image::generate_thumbnail(&file_path);
                             if result.is_none() {
-                                log::error!("Failed to generate thumbnail for {}", file_path);
+                                log::error!("Failed to generate thumbnail for {file_path}");
                             } else {
-                                log::debug!("Successfully generated thumbnail for {}", file_path);
+                                log::debug!("Successfully generated thumbnail for {file_path}");
                             }
                             thread::sleep(Duration::from_millis(100));
                         }
@@ -97,7 +97,7 @@ pub fn start_background_preview_worker() {
             let conn = match rusqlite::Connection::open(&args.db_path) {
                 Ok(c) => c,
                 Err(e) => {
-                    log::error!("Preview worker: failed to open DB: {}", e);
+                    log::error!("Preview worker: failed to open DB: {e}");
                     std::thread::sleep(std::time::Duration::from_secs(30));
                     continue;
                 }
@@ -105,7 +105,7 @@ pub fn start_background_preview_worker() {
             let mut stmt = match conn.prepare("SELECT path FROM file") {
                 Ok(s) => s,
                 Err(e) => {
-                    log::error!("Preview worker: failed to prepare statement: {}", e);
+                    log::error!("Preview worker: failed to prepare statement: {e}");
                     std::thread::sleep(std::time::Duration::from_secs(30));
                     continue;
                 }
@@ -122,16 +122,16 @@ pub fn start_background_preview_worker() {
                         let cache_key = crate::processing::cache::generate_cache_key(file_path);
                         // Only generate if not already cached
                         if crate::processing::cache::get_cached_preview(&cache_key).is_none() {
-                            log::info!("Background worker: generating preview for {}", file_path);
-                            let result = crate::processing::image::generate_preview(&file_path);
+                            log::info!("Background worker: generating preview for {file_path}");
+                            let result = crate::processing::image::generate_preview(file_path);
                             if result.is_none() {
-                                log::error!("Failed to generate preview for {}", file_path);
+                                log::error!("Failed to generate preview for {file_path}");
                             } else {
-                                log::debug!("Successfully generated preview for {}", file_path);
+                                log::debug!("Successfully generated preview for {file_path}");
                             }
                             thread::sleep(Duration::from_millis(100));
                         } else {
-                            log::trace!("Preview already cached for {}", file_path);
+                            log::trace!("Preview already cached for {file_path}");
                         }
                     }
                 }

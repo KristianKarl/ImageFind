@@ -10,7 +10,7 @@ use super::cache::{generate_cache_key, save_thumbnail_to_cache, save_preview_to_
 // Try to extract the best available preview from a RAW file using exiv2
 // Returns raw JPEG bytes of the largest extracted preview.
 fn exiv2_extract_best_preview(file_path: &str) -> Result<Vec<u8>, String> {
-    log::info!("Attempting exiv2 preview extraction for: {}", file_path);
+    log::info!("Attempting exiv2 preview extraction for: {file_path}");
 
     // Create a unique temporary directory for extraction
     let ts = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
@@ -19,8 +19,8 @@ fn exiv2_extract_best_preview(file_path: &str) -> Result<Vec<u8>, String> {
         generate_cache_key(file_path), ts
     ));
     if let Err(e) = fs::create_dir_all(&tmp_dir) {
-        log::warn!("Failed to create temp dir for exiv2: {}", e);
-        return Err(format!("Temp dir create failed: {}", e));
+        log::warn!("Failed to create temp dir for exiv2: {e}");
+        return Err(format!("Temp dir create failed: {e}"));
     }
     log::trace!("Created temp dir for exiv2: {}", tmp_dir.display());
 
@@ -40,20 +40,20 @@ fn exiv2_extract_best_preview(file_path: &str) -> Result<Vec<u8>, String> {
             if !result.status.success() {
                 let stderr = String::from_utf8_lossy(&result.stderr);
                 let stdout = String::from_utf8_lossy(&result.stdout);
-                log::error!("exiv2 failed for {}: {}", file_path, stderr);
-                log::error!("stdout: {}", stdout);
+                log::error!("exiv2 failed for {file_path}: {stderr}");
+                log::error!("stdout: {stdout}");
                 // Cleanup and propagate error
                 let _ = fs::remove_dir_all(&tmp_dir);
-                return Err(format!("exiv2 failed: {}", stderr));
+                return Err(format!("exiv2 failed: {stderr}"));
             }
         }
         Err(e) => {
-            log::warn!("Failed to execute exiv2 for {}: {}", file_path, e);
+            log::warn!("Failed to execute exiv2 for {file_path}: {e}");
             let _ = fs::remove_dir_all(&tmp_dir);
-            return Err(format!("exiv2 exec failed: {}", e));
+            return Err(format!("exiv2 exec failed: {e}"));
         }
     }
-    log::trace!("exiv2 preview extraction completed for: {}", file_path);
+    log::trace!("exiv2 preview extraction completed for: {file_path}");
 
 
     // Find the largest preview file produced (usually *-preview*.jpg/jpeg)
@@ -102,17 +102,17 @@ fn exiv2_extract_best_preview(file_path: &str) -> Result<Vec<u8>, String> {
 
 // Scale JPEG bytes to max_dimension and re-encode with given quality
 fn scale_jpeg_bytes(jpeg: &[u8], max_dimension: u32, jpeg_quality: u8) -> Result<Vec<u8>, String> {
-    let img = image::load_from_memory(jpeg).map_err(|e| format!("Failed to load JPEG bytes: {}", e))?;
+    let img = image::load_from_memory(jpeg).map_err(|e| format!("Failed to load JPEG bytes: {e}"))?;
     let scaled = img.resize(max_dimension, max_dimension, image::imageops::FilterType::CatmullRom);
     let mut out = Vec::new();
     scaled
         .write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, jpeg_quality))
-        .map_err(|e| format!("Failed to encode JPEG: {}", e))?;
+        .map_err(|e| format!("Failed to encode JPEG: {e}"))?;
     Ok(out)
 }
 
 pub fn generate_raw_preview(file_path: &str) -> Option<String> {
-    log::info!("Generating RAW preview for: {}", file_path);
+    log::info!("Generating RAW preview for: {file_path}");
 
     let cache_key = generate_cache_key(file_path);
 
@@ -122,21 +122,21 @@ pub fn generate_raw_preview(file_path: &str) -> Option<String> {
     {
         Ok(jpeg_bytes) => {
             if let Err(e) = save_preview_to_cache(&cache_key, &jpeg_bytes) {
-                log::warn!("Failed to cache exiv2 preview: {}", e);
+                log::warn!("Failed to cache exiv2 preview: {e}");
             }
             let base64_result = BASE64.encode(&jpeg_bytes);
             log::info!("Successfully generated RAW preview via exiv2, base64 length: {}", base64_result.len());
-            return Some(base64_result);
+            Some(base64_result)
         }
         Err(e) => {
-            log::error!("exiv2 preview failed for {}: {}", file_path, e);
+            log::error!("exiv2 preview failed for {file_path}: {e}");
             None
         }
     }
 }
 
 pub fn generate_raw_thumbnail(file_path: &str) -> Option<String> {
-    log::info!("Generating RAW thumbnail for: {}", file_path);
+    log::info!("Generating RAW thumbnail for: {file_path}");
 
     let cache_key = generate_cache_key(file_path);
 
@@ -146,14 +146,14 @@ pub fn generate_raw_thumbnail(file_path: &str) -> Option<String> {
     {
         Ok(jpeg_bytes) => {
             if let Err(e) = save_thumbnail_to_cache(&cache_key, &jpeg_bytes) {
-                log::warn!("Failed to cache exiv2 thumbnail: {}", e);
+                log::warn!("Failed to cache exiv2 thumbnail: {e}");
             }
             let base64_result = BASE64.encode(&jpeg_bytes);
             log::info!("Successfully generated RAW thumbnail via exiv2, base64 length: {}", base64_result.len());
-            return Some(base64_result);
+            Some(base64_result)
         }
         Err(e) => {
-            log::error!("exiv2 thumbnail failed for {}: {}", file_path, e);
+            log::error!("exiv2 thumbnail failed for {file_path}: {e}");
             None
         }
     }
