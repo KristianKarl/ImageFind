@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use urlencoding;
 use crate::cli::get_cli_args;
+use base64::{Engine as _, engine::{general_purpose}};
 
 use crate::processing::{
     image::{generate_thumbnail, generate_preview},
@@ -542,7 +543,7 @@ pub async fn get_preview(path: web::Path<String>) -> impl Responder {
             Ok(Some(preview_base64)) => {
                 log::debug!("Successfully generated preview for: {}", clean_path);
                 // Decode base64 to bytes before returning as image/jpeg
-                match base64::decode(&preview_base64) {
+                match general_purpose::STANDARD.decode(&preview_base64) {
                     Ok(jpeg_bytes) => {
                         HttpResponse::Ok()
                             .content_type("image/jpeg")

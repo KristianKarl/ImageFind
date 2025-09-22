@@ -208,18 +208,18 @@ pub fn generate_thumbnail(file_path: &str) -> Option<String> {
 
 pub fn generate_preview(file_path: &str) -> Option<String> {
     let path = Path::new(file_path);
-    
-    log::debug!("Generating preview for: {}", file_path);
-    
+
+    log::debug!("Preview requested for: {}", file_path);
+
     // Check if file exists
     if !path.exists() {
-        log::warn!("File does not exist for preview generation: {}", file_path);
+        log::warn!("File does not exist in scan dir: {}", file_path);
         return None;
     }
     
     // Generate cache key
     let cache_key = generate_cache_key(file_path);
-    log::trace!("Generated cache key for preview: {}", cache_key);
+    log::trace!("The cache key: {}", cache_key);
     
     // Check disk cache first
     if let Some(cached) = get_cached_preview(&cache_key) {
@@ -264,70 +264,40 @@ pub fn generate_preview(file_path: &str) -> Option<String> {
             "3fr" | "ari" | "bay" | "crw" | "dcr" | "erf" | "fff" | "iiq" | 
             "k25" | "kdc" | "mdc" | "mos" | "mrw" | "pef" | "ptx" | "pxn" | 
             "r3d" | "rwl" | "sr2" | "srf" | "srw" | "x3f" => {
-                log::debug!("Processing standard/other RAW format thumbnail: {}", file_path);
+                log::debug!("Processing standard and RAW format preview: {}", file_path);
                 
                 // Try to load and resize the image
                 match image::open(path) {
                     Ok(img) => {
-                        // Get original dimensions for optimization
                         let (original_width, original_height) = (img.width(), img.height());
-                        log::debug!("Original image dimensions: {}x{}", original_width, original_height);
+                        log::debug!("Preview processing - original dimensions: {}x{}", original_width, original_height);
                         
-                        // Early check: if image is very small, use it directly
-                        if original_width <= 400 && original_height <= 400 {
-                            log::trace!("Very small image, using direct conversion");
-                            // Very small image: convert to base64
-                            let mut jpeg_bytes = Vec::new();
-                            if img.write_with_encoder(
-                                image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg_bytes, 50)
-                            ).is_ok() {
+                        let max_dimension = 1980u32;
+                        log::trace!("Scaling image to fit {}x{}", max_dimension, max_dimension);
+                        let scaled_img = img.thumbnail(max_dimension, max_dimension);
+                        
+                        let mut jpeg_bytes = Vec::new();
+                        match scaled_img.write_with_encoder(
+                            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg_bytes, 60)
+                        ) {
+                            Ok(_) => {
+                                log::debug!("Successfully processed preview, size: {} bytes", jpeg_bytes.len());
+                                
+                                if let Err(e) = super::cache::save_preview_to_cache(&cache_key, &jpeg_bytes) {
+                                    log::warn!("Failed to save preview to cache: {}", e);
+                                } else {
+                                    log::trace!("Successfully cached preview");
+                                }
                                 let base64_result = BASE64.encode(&jpeg_bytes);
-                                let _ = save_thumbnail_to_cache(&cache_key, &jpeg_bytes);
-                                log::debug!("Successfully processed small image thumbnail");
+                                log::info!("Successfully generated preview for: {}", file_path);
                                 return Some(base64_result);
                             }
+                            Err(e) => {
+                                log::error!("JPEG encoding failed for preview {}: {:?}", file_path, e);
+                                None
+                            }
                         }
-
-                        // Optimize thumbnail generation based on image size
-                        let thumbnail = if original_width > 2000 || original_height > 2000 {
-                            log::trace!("Large image, using progressive scaling");
-                            // Large image: use progressive scaling for better performance
-                            let intermediate = img.resize(
-                                800, 
-                                800, 
-                                image::imageops::FilterType::Triangle // Fast first pass
-                            );
-                            intermediate.resize(
-                                200, 
-                                200, 
-                                image::imageops::FilterType::CatmullRom // High quality final pass
-                            )
-                        } else {
-                            log::trace!("Medium image, using direct scaling");
-                            // Smaller image: direct scaling with high quality
-                            img.resize(
-                                200, 
-                                200, 
-                                image::imageops::FilterType::CatmullRom
-                            )
-                        };
-
-                        // Convert to JPEG and encode as base64
-                        let mut jpeg_bytes = Vec::new();
-                        if thumbnail.write_with_encoder(
-                            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg_bytes, 50)
-                        ).is_ok() {
-                            let base64_result = BASE64.encode(&jpeg_bytes);
-                            // Save to disk cache
-                            let _ = save_thumbnail_to_cache(&cache_key, &jpeg_bytes);
-                            log::info!("Successfully generated standard image thumbnail");
-                            return Some(base64_result);
-                        }
-                        
-                        log::error!("JPEG encoding failed for thumbnail: {}", file_path);
-                        // If JPEG encoding failed, return None
-                        None
-                    }
+                    }                    
                     Err(e) => {
                         // Log the error for debugging
                         log::warn!("Failed to process image with standard method {}: {:?}", file_path, e);
@@ -345,8 +315,8 @@ pub fn generate_preview(file_path: &str) -> Option<String> {
                                     "k25" | "kdc" | "mdc" | "mos" | "mrw" | "pef" | "ptx" | "pxn" | 
                                     "r3d" | "rwl" | "sr2" | "srf" | "srw" | "x3f" => {
                                         log::debug!("Attempting rawloader fallback for unsupported RAW format");
-                                        if let Some(result) = generate_raw_thumbnail(file_path) {
-                                            log::info!("Successfully generated thumbnail using rawloader fallback");
+                                        if let Some(result) = generate_raw_preview(file_path) {
+                                            log::info!("Successfully generated preview using rawloader fallback");
                                             return Some(result);
                                         }
                                         log::warn!("Rawloader fallback also failed for: {}", file_path);
@@ -369,29 +339,8 @@ pub fn generate_preview(file_path: &str) -> Option<String> {
                     }
                 }
             }
-            // Video formats - generate thumbnail from first frame
-            "mp4" | "avi" | "mov" | "wmv" | "flv" | "webm" | "mkv" | "m4v" | "3gp" | "ogv" => {
-                log::info!("Processing video thumbnail: {}", file_path);
-                
-                if let Some(thumbnail_base64) = generate_video_thumbnail(file_path) {
-                    // Decode base64 to get JPEG bytes for caching
-                    if let Ok(jpeg_bytes) = BASE64.decode(&thumbnail_base64) {
-                        // Save to disk cache
-                        if let Err(e) = save_thumbnail_to_cache(&cache_key, &jpeg_bytes) {
-                            log::warn!("Failed to cache video thumbnail: {}", e);
-                        } else {
-                            log::trace!("Successfully cached video thumbnail");
-                        }
-                    }
-                    log::info!("Successfully generated video thumbnail");
-                    Some(thumbnail_base64)
-                } else {
-                    log::warn!("Failed to generate video thumbnail for: {}", file_path);
-                    None
-                }
-            }
             _ => {
-                log::debug!("Unsupported file extension for thumbnail: {}", ext_str);
+                log::debug!("Unsupported file extension for preview: {}", ext_str);
                 None
             },
         }
