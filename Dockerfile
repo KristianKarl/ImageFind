@@ -15,4 +15,4 @@ RUN apt update && apt install -y \
 	ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=0 /bin/ImageFind/target/release/image_find /bin/ImageFind
-CMD ["ImageFind", "--scan-dir", "/scan-dir", "--db-path",  "/db/db.sqlite", "--thumbnail-cache", "/thumbnail-cache", "--full-image-cache", "/full-image-cache", "--video_preview-cache", "/video-preview-cache"]
+CMD ["ImageFind", "--scan-dir", "/scan-dir", "--db-path",  "/db/db.sqlite", "--thumbnail-cache", "/thumbnail-cache", "--full-image-cache", "/full-image-cache", "--video-preview-cache", "/video-preview-cache"]
