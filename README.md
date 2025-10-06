@@ -18,14 +18,16 @@ This tool will enable you to quickly find and view any image or video in your co
 ## Features
 
 - Scan a directory for .xmp sidecars and import metadata into SQLite
-- Search via UI or JSON API with simple AND support
+- Search via UI or JSON API with simple AND support (quoted phrases supported)
 - On-demand thumbnail generation and cached full-size image previews
 - Keyboard-friendly modal with navigation and rotation (images)
 - Video preview and playback in modal using HTML5 `<video>` element
 - Video preview uses pre-transcoded files from a dedicated cache directory
 - Enhanced RAW file support including improved Fujifilm RAF extraction
-- Basic path security checks
+- Basic path security checks (rejects `..` in paths, always URL-decodes)
 - Configurable webserver port via CLI
+- Progressive scaling and JPEG quality settings for thumbnails/previews
+- Background workers for thumbnail and preview generation, pausing on user activity
 
 ## Getting Started
 
@@ -50,12 +52,12 @@ This tool will enable you to quickly find and view any image or video in your co
 ### Usage
 
 Runtime tools required:
-- exiv2 (for RAW preview/thumbnail extraction)
 - ffmpeg (for video thumbnails and manual transcoding)
+- imagemagick (for magick-based preview/thumbnail fallback)
 
 Quick checks:
-- `exiv2 --version`
 - `ffmpeg -version`
+- `magick --version`
 
 ```
 imagefind --scan-dir <DIR> --db-path <FILE> --thumbnail-cache <DIR> --full-image-cache <DIR> --video_preview-cache <DIR> [--port <PORT>]
@@ -157,6 +159,11 @@ Once indexing is complete, the Actix Web server starts and listens for requests.
   - For videos, a request to `/video/{path}` serves a pre-transcoded video file (`_480p.mp4`) from the `video_preview_cache` directory for browser playback. The browser's native `<video>` player is used for playback in the modal.
 - **Caching**: Both thumbnail and full-image preview generation are computationally intensive. The disk-based caches at `--thumbnail-cache`, `--full-image-cache`, and `--video_preview-cache` significantly improve performance on subsequent requests for the same media. A cache-busting parameter (`?t=timestamp`) can be added to image URLs to force regeneration.
 
+## Image and RAW/Video Handling
+
+- **Image formats**: any format that is handled by `magick`.
+- **Video**: Thumbnails generated via `ffmpeg`; previews served from pre-transcoded `_480p.mp4` files in the cache directory.
+
 ## Video Preview Logic
 
 - When a video is requested for preview, the backend looks for a file with `_480p.mp4` appended to the basename (e.g., `video.mp4` → `video_480p.mp4`) in the `video_preview_cache` directory.
@@ -204,8 +211,7 @@ Then move `output_480p.mp4` to your `video_preview_cache` directory.
 - Media-serving routes apply basic path traversal prevention.
 - Ensure the process can read the media files you reference.
 - Video previews require manual transcoding to `_480p.mp4` files and placement in the cache directory.
- - RAW previews and thumbnails use exiv2 when available; if missing, the app falls back to embedded-JPEG extraction.
-
+- ImageMagick is used for previews and thumbnails when converting images.
 - Closing the modal window stops video playback and audio.
 
 ## Troubleshooting
