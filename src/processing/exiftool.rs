@@ -1,15 +1,11 @@
-use image;
+use std::{fs, path::PathBuf, process::Command, time::{SystemTime, UNIX_EPOCH}};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use std::process::Command;
-use std::fs;
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::cache::{generate_cache_key, save_thumbnail_to_cache, save_preview_to_cache};
+use crate::processing::cache::{generate_cache_key, save_preview_to_cache, save_thumbnail_to_cache};
+use crate::processing::raw::{scale_jpeg_bytes};
 
-// Try to extract the best available preview from a RAW file using exiv2
-// Returns raw JPEG bytes of the largest extracted preview.
-pub fn exiv2_extract_best_preview(file_path: &str) -> Result<Vec<u8>, String> {
+
+fn exiftool_extract_preview(file_path: &str) -> Result<Vec<u8>, String> {
     log::info!("Attempting exiv2 preview extraction for: {file_path}");
 
     // Create a unique temporary directory for extraction
@@ -100,60 +96,49 @@ pub fn exiv2_extract_best_preview(file_path: &str) -> Result<Vec<u8>, String> {
     result
 }
 
-// Scale JPEG bytes to max_dimension and re-encode with given quality
-pub fn scale_jpeg_bytes(jpeg: &[u8], max_dimension: u32, jpeg_quality: u8) -> Result<Vec<u8>, String> {
-    let img = image::load_from_memory(jpeg).map_err(|e| format!("Failed to load JPEG bytes: {e}"))?;
-    let scaled = img.resize(max_dimension, max_dimension, image::imageops::FilterType::CatmullRom);
-    let mut out = Vec::new();
-    scaled
-        .write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, jpeg_quality))
-        .map_err(|e| format!("Failed to encode JPEG: {e}"))?;
-    Ok(out)
-}
-
-pub fn generate_raw_preview(file_path: &str) -> Option<String> {
+pub fn generate_exiftool_preview(file_path: &str) -> Option<String> {
     log::info!("Generating RAW preview for: {file_path}");
 
     let cache_key = generate_cache_key(file_path);
 
-    // First try exiv2-based extraction
-    match exiv2_extract_best_preview(file_path)
+    // First try exiftool-based extraction
+    match exiftool_extract_preview(file_path)
         .and_then(|bytes| scale_jpeg_bytes(&bytes, 1980, 60))
     {
         Ok(jpeg_bytes) => {
             if let Err(e) = save_preview_to_cache(&cache_key, &jpeg_bytes) {
-                log::warn!("Failed to cache exiv2 preview: {e}");
+                log::warn!("Failed to cache exiftool preview: {e}");
             }
             let base64_result = BASE64.encode(&jpeg_bytes);
-            log::info!("Successfully generated RAW preview via exiv2, base64 length: {}", base64_result.len());
+            log::info!("Successfully generated RAW preview via exiftool, base64 length: {}", base64_result.len());
             Some(base64_result)
         }
         Err(e) => {
-            log::error!("exiv2 preview failed for {file_path}: {e}");
+            log::error!("exiftool preview failed for {file_path}: {e}");
             None
         }
     }
 }
 
-pub fn generate_raw_thumbnail(file_path: &str) -> Option<String> {
+pub fn generate_exiftool_thumbnail(file_path: &str) -> Option<String> {
     log::info!("Generating RAW thumbnail for: {file_path}");
 
     let cache_key = generate_cache_key(file_path);
 
-    // First try exiv2-based extraction
-    match exiv2_extract_best_preview(file_path)
+    // First try exif2-based extraction
+    match exiftool_extract_preview(file_path)
         .and_then(|bytes| scale_jpeg_bytes(&bytes, 200, 50))
     {
         Ok(jpeg_bytes) => {
             if let Err(e) = save_thumbnail_to_cache(&cache_key, &jpeg_bytes) {
-                log::warn!("Failed to cache exiv2 thumbnail: {e}");
+                log::warn!("Failed to cache exiftool thumbnail: {e}");
             }
             let base64_result = BASE64.encode(&jpeg_bytes);
-            log::info!("Successfully generated RAW thumbnail via exiv2, base64 length: {}", base64_result.len());
+            log::info!("Successfully generated RAW thumbnail via exiftool, base64 length: {}", base64_result.len());
             Some(base64_result)
         }
         Err(e) => {
-            log::error!("exiv2 thumbnail failed for {file_path}: {e}");
+            log::error!("exiftool thumbnail failed for {file_path}: {e}");
             None
         }
     }

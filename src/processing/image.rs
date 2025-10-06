@@ -3,6 +3,7 @@ use image;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
 use crate::processing::raw::generate_raw_preview;
+use crate::processing::exiftool::{generate_exiftool_thumbnail, generate_exiftool_preview};
 
 use super::cache::{generate_cache_key, get_cached_thumbnail, get_cached_preview, save_thumbnail_to_cache};
 use super::raw::generate_raw_thumbnail;
@@ -40,28 +41,36 @@ pub fn generate_thumbnail(file_path: &str) -> Option<String> {
         
         match ext_str.as_str() {
             // RAW files - use rawloader crate with RGB demosaicing
-            "nef" | "cr2" | "cr3" | "arw" | "orf" | "rw2" | "raf" | "dng" => {
+            "nef" | "cr2" | "cr3" | "arw" | "orf" | "rw2" | "raf" | "dng" => '_raw: {
                 log::info!("Processing RAW file thumbnail: {file_path}");
                 
                 if let Some(result) = generate_raw_thumbnail(file_path) {
-                    log::info!("Successfully generated RAW thumbnail using rawloader");
+                    log::info!("Successfully generated thumbnail from RAW file using raw methods");
+                    Some(result)
+                } else if let Some(result) = generate_exiftool_thumbnail(file_path) {
+                    log::info!("Successfully generated thumbnail from RAW file using exiftool");
                     Some(result)
                 } else {
-                    log::error!("RAW thumbna processing failed: {file_path}");
+                    log::error!("Failed to generate thumbnail from RAW file: {file_path}");
                     None
                 }
             }
+
             // TIFF files - use specialized tiff crate
             "tiff" | "tif" => {
                 log::info!("Processing TIFF file thumbnail: {file_path}");
                 
                 // Try the specialized TIFF handler first
                 if let Some(result) = generate_tiff_thumbnail(file_path) {
-                    log::info!("Successfully generated TIFF thumbnail using specialized handler");
+                    log::info!("Successfully generated thumbnail from TIFF file using specialized handler");
                     return Some(result);
+                } else if let Some(result) = generate_exiftool_thumbnail(file_path) {
+                    log::info!("Successfully generated thumbnail from TIFF file using exiftool");
+                    Some(result)
+                } else {
+                    log::error!("Failed to generate thumbnail from TIFF file: {file_path}");
+                    None
                 }
-
-                None
             }
             // Standard image formats
             "jpg" | "jpeg" | "png" | "gif" | "bmp" | "webp" |
@@ -129,6 +138,11 @@ pub fn generate_thumbnail(file_path: &str) -> Option<String> {
                             return Some(base64_result);
                         }
                         
+                        if let Some(result) = generate_exiftool_thumbnail(file_path) {
+                            log::info!("Successfully generated TIFF thumbnail using exiftool");
+                            return Some(result);
+                        }
+
                         log::error!("JPEG encoding failed for thumbnail: {file_path}");
                         // If JPEG encoding failed, return None
                         None
@@ -136,41 +150,12 @@ pub fn generate_thumbnail(file_path: &str) -> Option<String> {
                     Err(e) => {
                         // Log the error for debugging
                         log::warn!("Failed to process image with standard method {file_path}: {e:?}");
-                        
-                        // For RAW formats that might not be supported by the image crate,
-                        // try rawloader as a fallback
-                        match e {
-                            image::ImageError::Unsupported(_) => {
-                                log::info!("Unsupported format for {file_path}: {ext_str}. Trying rawloader fallback...");
-                                
-                                // Try rawloader for RAW formats
-                                match ext_str.as_str() {
-                                    "nef" | "cr2" | "cr3" | "arw" | "orf" | "rw2" | "raf" | "dng" | 
-                                    "3fr" | "ari" | "bay" | "crw" | "dcr" | "erf" | "fff" | "iiq" | 
-                                    "k25" | "kdc" | "mdc" | "mos" | "mrw" | "pef" | "ptx" | "pxn" | 
-                                    "r3d" | "rwl" | "sr2" | "srf" | "srw" | "x3f" => {
-                                        log::debug!("Attempting rawloader fallback for unsupported RAW format");
-                                        if let Some(result) = generate_raw_thumbnail(file_path) {
-                                            log::info!("Successfully generated thumbnail using rawloader fallback");
-                                            return Some(result);
-                                        }
-                                        log::warn!("Rawloader fallback also failed for: {file_path}");
-                                    }
-                                    _ => {
-                                        log::debug!("No fallback available for unsupported format: {ext_str}");
-                                    }
-                                }
-                                
-                                // If rawloader failed, no other options
-                                log::error!("All processing methods failed for: {file_path}");
-                                None
-                            }
-                            _ => {
-                                // For other errors, no fallback available
-                                log::error!("Image processing error for {file_path}: {e:?}");
-                                None
-                            }
+                        if let Some(result) = generate_exiftool_thumbnail(file_path) {
+                            log::info!("Successfully generated thumbnail using exiftool for: {file_path}");
+                            return Some(result);
                         }
+                        log::error!("Failed to generate thumbnail for: {file_path}");
+                        None
                     }
                 }
             }
@@ -239,10 +224,13 @@ pub fn generate_preview(file_path: &str) -> Option<String> {
                 log::info!("Processing RAW file preview: {file_path}");
                 
                 if let Some(result) = generate_raw_preview(file_path) {
-                    log::info!("Successfully generated RAW preview using rawloader");
-                    Some(result)
+                    log::info!("Successfully generated preview for RAW file using raw methods");
+                    return Some(result)
+                } else if let Some(result) = generate_exiftool_preview(file_path) {
+                    log::info!("Successfully generated preview for RAW file using exiftool");
+                    return Some(result);
                 } else {
-                    log::error!("RAW preview processing failed: {file_path}");
+                    log::error!("Failed to generate preview for RAW file: {file_path}");
                     None
                 }
             }
@@ -252,11 +240,15 @@ pub fn generate_preview(file_path: &str) -> Option<String> {
                 
                 // Try the specialized TIFF handler first
                 if let Some(result) = generate_tiff_preview(file_path) {
-                    log::info!("Successfully generated TIFF preview using specialized handler");
+                    log::info!("Successfully generated preview for TIFF file using specialized handler");
                     return Some(result);
-                }
-
-                None
+                } else if let Some(result) = generate_exiftool_preview(file_path) {
+                    log::info!("Successfully generated preview for TIFF file using exiftool");
+                    return Some(result);
+                } else {
+                    log::error!("Failed to generate preview for TIFF file: {file_path}");
+                    None
+                }           
             }
             // Standard image formats
             "jpg" | "jpeg" | "png" | "gif" | "bmp" | "webp" |
@@ -293,49 +285,23 @@ pub fn generate_preview(file_path: &str) -> Option<String> {
                                 Some(base64_result)
                             }
                             Err(e) => {
+                                if let Some(result) = generate_exiftool_preview(file_path) {
+                                    log::info!("Successfully generated TIFF preview using exiftool");
+                                    return Some(result);
+                                }
                                 log::error!("JPEG encoding failed for preview {file_path}: {e:?}");
                                 None
                             }
                         }
                     }                    
                     Err(e) => {
-                        // Log the error for debugging
                         log::warn!("Failed to process image with standard method {file_path}: {e:?}");
-                        
-                        // For RAW formats that might not be supported by the image crate,
-                        // try rawloader as a fallback
-                        match e {
-                            image::ImageError::Unsupported(_) => {
-                                log::info!("Unsupported format for {file_path}: {ext_str}. Trying rawloader fallback...");
-                                
-                                // Try rawloader for RAW formats
-                                match ext_str.as_str() {
-                                    "nef" | "cr2" | "cr3" | "arw" | "orf" | "rw2" | "raf" | "dng" | 
-                                    "3fr" | "ari" | "bay" | "crw" | "dcr" | "erf" | "fff" | "iiq" | 
-                                    "k25" | "kdc" | "mdc" | "mos" | "mrw" | "pef" | "ptx" | "pxn" | 
-                                    "r3d" | "rwl" | "sr2" | "srf" | "srw" | "x3f" => {
-                                        log::debug!("Attempting rawloader fallback for unsupported RAW format");
-                                        if let Some(result) = generate_raw_preview(file_path) {
-                                            log::info!("Successfully generated preview using rawloader fallback");
-                                            return Some(result);
-                                        }
-                                        log::warn!("Rawloader fallback also failed for: {file_path}");
-                                    }
-                                    _ => {
-                                        log::debug!("No fallback available for unsupported format: {ext_str}");
-                                    }
-                                }
-                                
-                                // If rawloader failed, no other options
-                                log::error!("All processing methods failed for: {file_path}");
-                                None
-                            }
-                            _ => {
-                                // For other errors, no fallback available
-                                log::error!("Image processing error for {file_path}: {e:?}");
-                                None
-                            }
+                        if let Some(result) = generate_exiftool_preview(file_path) {
+                            log::info!("Successfully generated preview using exiftool for: {file_path}");
+                            return Some(result);
                         }
+                        log::error!("Failed to generate preview for: {file_path}");
+                        None
                     }
                 }
             }
