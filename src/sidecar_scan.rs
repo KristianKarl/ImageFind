@@ -80,7 +80,8 @@ pub fn scan_and_import_sidecars() -> Result<()> {
             }
             is_xmp
         })
-        .map(|entry| entry.path().to_owned())
+        // Convert to absolute path here
+        .map(|entry| entry.path().canonicalize().unwrap_or_else(|_| entry.path().to_owned()))
         .collect();
 
     log::info!("Found {} XMP files to process", xmp_files.len());
@@ -95,6 +96,7 @@ pub fn scan_and_import_sidecars() -> Result<()> {
 
     // Process each XMP file in parallel
     xmp_files.par_iter().for_each(|path| {
+        // Use absolute path string for DB
         if let Some(path_str) = path.to_str() {
             log::debug!("Processing XMP file: {path_str}");
 

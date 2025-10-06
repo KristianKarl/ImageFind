@@ -15,6 +15,7 @@ pub fn start_background_thumbnail_worker() {
     let user_active = USER_REQUEST_ACTIVE.clone();
     let exhausted_flag = THUMBNAIL_WORKER_EXHAUSTED.clone();
     thread::spawn(move || {
+        log::info!("Background thumbnail worker started");
         let args = get_cli_args();
         let conn = match Connection::open(&args.db_path) {
             Ok(c) => c,

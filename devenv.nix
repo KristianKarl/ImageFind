@@ -9,7 +9,7 @@
     pkgs.git
     pkgs.sqlite
     pkgs.ffmpeg
-    pkgs.exiv2
+    pkgs.imagemagick
     pkgs.pkg-config
   ];
 

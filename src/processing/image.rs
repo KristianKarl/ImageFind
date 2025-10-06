@@ -1,14 +1,12 @@
 use std::path::Path;
-use image;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
-use crate::processing::raw::generate_raw_preview;
-use crate::processing::exiftool::{generate_exiftool_thumbnail, generate_exiftool_preview};
+use crate::processing::magick::generate_magick_preview;
 
+use super::magick::{generate_magick_thumbnail};
 use super::cache::{generate_cache_key, get_cached_thumbnail, get_cached_preview, save_thumbnail_to_cache};
-use super::raw::generate_raw_thumbnail;
-use super::tiff::{generate_tiff_thumbnail,generate_tiff_preview};
 use super::video::generate_video_thumbnail;
+
 
 // Function to generate a JPEG thumbnail from an image file
 pub fn generate_thumbnail(file_path: &str) -> Option<String> {
@@ -40,125 +38,6 @@ pub fn generate_thumbnail(file_path: &str) -> Option<String> {
         log::trace!("File extension detected: {ext_str}");
         
         match ext_str.as_str() {
-            // RAW files - use rawloader crate with RGB demosaicing
-            "nef" | "cr2" | "cr3" | "arw" | "orf" | "rw2" | "raf" | "dng" => '_raw: {
-                log::info!("Processing RAW file thumbnail: {file_path}");
-                
-                if let Some(result) = generate_raw_thumbnail(file_path) {
-                    log::info!("Successfully generated thumbnail from RAW file using raw methods");
-                    Some(result)
-                } else if let Some(result) = generate_exiftool_thumbnail(file_path) {
-                    log::info!("Successfully generated thumbnail from RAW file using exiftool");
-                    Some(result)
-                } else {
-                    log::error!("Failed to generate thumbnail from RAW file: {file_path}");
-                    None
-                }
-            }
-
-            // TIFF files - use specialized tiff crate
-            "tiff" | "tif" => {
-                log::info!("Processing TIFF file thumbnail: {file_path}");
-                
-                // Try the specialized TIFF handler first
-                if let Some(result) = generate_tiff_thumbnail(file_path) {
-                    log::info!("Successfully generated thumbnail from TIFF file using specialized handler");
-                    return Some(result);
-                } else if let Some(result) = generate_exiftool_thumbnail(file_path) {
-                    log::info!("Successfully generated thumbnail from TIFF file using exiftool");
-                    Some(result)
-                } else {
-                    log::error!("Failed to generate thumbnail from TIFF file: {file_path}");
-                    None
-                }
-            }
-            // Standard image formats
-            "jpg" | "jpeg" | "png" | "gif" | "bmp" | "webp" |
-            // Other RAW formats not fully supported by rawloader
-            "3fr" | "ari" | "bay" | "crw" | "dcr" | "erf" | "fff" | "iiq" | 
-            "k25" | "kdc" | "mdc" | "mos" | "mrw" | "pef" | "ptx" | "pxn" | 
-            "r3d" | "rwl" | "sr2" | "srf" | "srw" | "x3f" => {
-                log::debug!("Processing standard/other RAW format thumbnail: {file_path}");
-                
-                // Try to load and resize the image
-                match image::open(path) {
-                    Ok(img) => {
-                        // Get original dimensions for optimization
-                        let (original_width, original_height) = (img.width(), img.height());
-                        log::debug!("Original image dimensions: {original_width}x{original_height}");
-                        
-                        // Early check: if image is very small, use it directly
-                        if original_width <= 400 && original_height <= 400 {
-                            log::trace!("Very small image, using direct conversion");
-                            // Very small image: convert to base64
-                            let mut jpeg_bytes = Vec::new();
-                            if img.write_with_encoder(
-                                image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg_bytes, 50)
-                            ).is_ok() {
-                                let base64_result = BASE64.encode(&jpeg_bytes);
-                                let _ = save_thumbnail_to_cache(&cache_key, &jpeg_bytes);
-                                log::debug!("Successfully processed small image thumbnail");
-                                return Some(base64_result);
-                            }
-                        }
-
-                        // Optimize thumbnail generation based on image size
-                        let thumbnail = if original_width > 2000 || original_height > 2000 {
-                            log::trace!("Large image, using progressive scaling");
-                            // Large image: use progressive scaling for better performance
-                            let intermediate = img.resize(
-                                800, 
-                                800, 
-                                image::imageops::FilterType::Triangle // Fast first pass
-                            );
-                            intermediate.resize(
-                                200, 
-                                200, 
-                                image::imageops::FilterType::CatmullRom // High quality final pass
-                            )
-                        } else {
-                            log::trace!("Medium image, using direct scaling");
-                            // Smaller image: direct scaling with high quality
-                            img.resize(
-                                200, 
-                                200, 
-                                image::imageops::FilterType::CatmullRom
-                            )
-                        };
-
-                        // Convert to JPEG and encode as base64
-                        let mut jpeg_bytes = Vec::new();
-                        if thumbnail.write_with_encoder(
-                            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg_bytes, 50)
-                        ).is_ok() {
-                            let base64_result = BASE64.encode(&jpeg_bytes);
-                            // Save to disk cache
-                            let _ = save_thumbnail_to_cache(&cache_key, &jpeg_bytes);
-                            log::info!("Successfully generated standard image thumbnail");
-                            return Some(base64_result);
-                        }
-                        
-                        if let Some(result) = generate_exiftool_thumbnail(file_path) {
-                            log::info!("Successfully generated TIFF thumbnail using exiftool");
-                            return Some(result);
-                        }
-
-                        log::error!("JPEG encoding failed for thumbnail: {file_path}");
-                        // If JPEG encoding failed, return None
-                        None
-                    }
-                    Err(e) => {
-                        // Log the error for debugging
-                        log::warn!("Failed to process image with standard method {file_path}: {e:?}");
-                        if let Some(result) = generate_exiftool_thumbnail(file_path) {
-                            log::info!("Successfully generated thumbnail using exiftool for: {file_path}");
-                            return Some(result);
-                        }
-                        log::error!("Failed to generate thumbnail for: {file_path}");
-                        None
-                    }
-                }
-            }
             // Video formats - generate thumbnail from first frame
             "mp4" | "avi" | "mov" | "wmv" | "flv" | "webm" | "mkv" | "m4v" | "3gp" | "ogv" => {
                 log::info!("Processing video thumbnail: {file_path}");
@@ -179,11 +58,16 @@ pub fn generate_thumbnail(file_path: &str) -> Option<String> {
                     log::warn!("Failed to generate video thumbnail for: {file_path}");
                     None
                 }
-            }
+            }          
             _ => {
-                log::debug!("Unsupported file extension for thumbnail: {ext_str}");
-                None
-            },
+                if let Some(result) = generate_magick_thumbnail(file_path) {
+                    log::info!("Successfully generated thumbnail for file using magick");
+                    return Some(result)
+                } else {
+                    log::error!("Failed creating a thumbnail for: {file_path}");
+                    None                    
+                }
+            }
         }
     } else {
         log::warn!("No file extension found for: {file_path}");
@@ -213,105 +97,12 @@ pub fn generate_preview(file_path: &str) -> Option<String> {
     }
     
     log::debug!("No cached preview found, generating new one for: {file_path}");
-    
-    // Check file extension for supported formats
-    if let Some(extension) = path.extension() {
-        let ext_str = extension.to_string_lossy().to_lowercase();
-        log::trace!("File extension detected: {ext_str}");
-        
-        match ext_str.as_str() {
-            "nef" | "cr2" | "cr3" | "arw" | "orf" | "rw2" | "raf" | "dng" => {
-                log::info!("Processing RAW file preview: {file_path}");
-                
-                if let Some(result) = generate_raw_preview(file_path) {
-                    log::info!("Successfully generated preview for RAW file using raw methods");
-                    return Some(result)
-                } else if let Some(result) = generate_exiftool_preview(file_path) {
-                    log::info!("Successfully generated preview for RAW file using exiftool");
-                    return Some(result);
-                } else {
-                    log::error!("Failed to generate preview for RAW file: {file_path}");
-                    None
-                }
-            }
-            // TIFF files - use specialized tiff crate
-            "tiff" | "tif" => {
-                log::info!("Processing TIFF file preview: {file_path}");
-                
-                // Try the specialized TIFF handler first
-                if let Some(result) = generate_tiff_preview(file_path) {
-                    log::info!("Successfully generated preview for TIFF file using specialized handler");
-                    return Some(result);
-                } else if let Some(result) = generate_exiftool_preview(file_path) {
-                    log::info!("Successfully generated preview for TIFF file using exiftool");
-                    return Some(result);
-                } else {
-                    log::error!("Failed to generate preview for TIFF file: {file_path}");
-                    None
-                }           
-            }
-            // Standard image formats
-            "jpg" | "jpeg" | "png" | "gif" | "bmp" | "webp" |
-            // Other RAW formats not fully supported by rawloader
-            "3fr" | "ari" | "bay" | "crw" | "dcr" | "erf" | "fff" | "iiq" | 
-            "k25" | "kdc" | "mdc" | "mos" | "mrw" | "pef" | "ptx" | "pxn" | 
-            "r3d" | "rwl" | "sr2" | "srf" | "srw" | "x3f" => {
-                log::debug!("Processing standard and RAW format preview: {file_path}");
-                
-                // Try to load and resize the image
-                match image::open(path) {
-                    Ok(img) => {
-                        let (original_width, original_height) = (img.width(), img.height());
-                        log::debug!("Preview processing - original dimensions: {original_width}x{original_height}");
-                        
-                        let max_dimension = 1980u32;
-                        log::trace!("Scaling image to fit {max_dimension}x{max_dimension}");
-                        let scaled_img = img.thumbnail(max_dimension, max_dimension);
-                        
-                        let mut jpeg_bytes = Vec::new();
-                        match scaled_img.write_with_encoder(
-                            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg_bytes, 60)
-                        ) {
-                            Ok(_) => {
-                                log::debug!("Successfully processed preview, size: {} bytes", jpeg_bytes.len());
-                                
-                                if let Err(e) = super::cache::save_preview_to_cache(&cache_key, &jpeg_bytes) {
-                                    log::warn!("Failed to save preview to cache: {e}");
-                                } else {
-                                    log::trace!("Successfully cached preview");
-                                }
-                                let base64_result = BASE64.encode(&jpeg_bytes);
-                                log::info!("Successfully generated preview for: {file_path}");
-                                Some(base64_result)
-                            }
-                            Err(e) => {
-                                if let Some(result) = generate_exiftool_preview(file_path) {
-                                    log::info!("Successfully generated TIFF preview using exiftool");
-                                    return Some(result);
-                                }
-                                log::error!("JPEG encoding failed for preview {file_path}: {e:?}");
-                                None
-                            }
-                        }
-                    }                    
-                    Err(e) => {
-                        log::warn!("Failed to process image with standard method {file_path}: {e:?}");
-                        if let Some(result) = generate_exiftool_preview(file_path) {
-                            log::info!("Successfully generated preview using exiftool for: {file_path}");
-                            return Some(result);
-                        }
-                        log::error!("Failed to generate preview for: {file_path}");
-                        None
-                    }
-                }
-            }
-            _ => {
-                log::debug!("Unsupported file extension for preview: {ext_str}");
-                None
-            },
-        }
+
+    if let Some(result) = generate_magick_preview(file_path) {
+        log::info!("Successfully generated thumbnail for file using magick");
+        return Some(result)
     } else {
-        log::warn!("No file extension found for: {file_path}");
-        None
-    }
+        log::error!("Failed creating a thumbnail for: {file_path}");
+        None                    
+    }  
 }
