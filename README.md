@@ -20,14 +20,15 @@ This tool will enable you to quickly find and view any image or video in your co
 - Scan a directory for .xmp sidecars and import metadata into SQLite
 - Search via UI or JSON API with simple AND support (quoted phrases supported)
 - On-demand thumbnail generation and cached full-size image previews
-- Keyboard-friendly modal with navigation and rotation (images)
-- Video preview and playback in modal using HTML5 `<video>` element
+- Keyboard-friendly navigation and rotation (images)
+- Video preview and playback using HTML5 `<video>` element
 - Video preview uses pre-transcoded files from a dedicated cache directory
 - Enhanced RAW file support including improved Fujifilm RAF extraction
 - Basic path security checks (rejects `..` in paths, always URL-decodes)
 - Configurable webserver port via CLI
 - Progressive scaling and JPEG quality settings for thumbnails/previews
 - Background workers for thumbnail and preview generation, pausing on user activity
+- **Fullscreen preview:** Clicking a result displays the preview image fullscreen (not in a modal window)
 
 ## Getting Started
 
@@ -154,9 +155,9 @@ Once indexing is complete, the Actix Web server starts and listens for requests.
 
 - **Search**: The UI (`/search`) and API (`/api`) endpoints accept a `search` query parameter. The query string is parsed to support multiple search terms separated by whitespace. Terms containing spaces can be enclosed in double quotes (e.g., `lycke johanna "family vacation"`). The application then queries the `key_value` table for files that have metadata values matching all provided terms (AND logic).
 - **Thumbnail Generation**: The search results page loads asynchronously, with each result item making a request to `/thumbnail/{path}`. The server checks a local cache (`thumbnail_cache/`) for an existing thumbnail. If not found, it generates a new thumbnail from the media file, saves it to the cache, and returns it as a Base64-encoded string in a JSON response.
-- **Image and Video Previews**: Clicking a result in the UI opens a modal preview.
-  - For images, a request is made to `/image/{path}`. The server generates and caches a full-size JPEG preview in `full_image_cache/`, serving it with an `image/jpeg` content type.
-  - For videos, a request to `/video/{path}` serves a pre-transcoded video file (`_480p.mp4`) from the `video_preview_cache` directory for browser playback. The browser's native `<video>` player is used for playback in the modal.
+- **Image and Video Previews**: Clicking a result in the UI opens a fullscreen preview.
+  - For images, a request is made to `/image/{path}`. The server generates and caches a full-size JPEG preview in `full_image_cache/`, serving it with an `image/jpeg` content type. The preview is shown fullscreen.
+  - For videos, a request to `/video/{path}` serves a pre-transcoded video file (`_480p.mp4`) from the `video_preview_cache` directory for browser playback. The browser's native `<video>` player is used for fullscreen playback.
 - **Caching**: Both thumbnail and full-image preview generation are computationally intensive. The disk-based caches at `--thumbnail-cache`, `--full-image-cache`, and `--video_preview-cache` significantly improve performance on subsequent requests for the same media. A cache-busting parameter (`?t=timestamp`) can be added to image URLs to force regeneration.
 
 ## Image and RAW/Video Handling
@@ -212,7 +213,7 @@ Then move `output_480p.mp4` to your `video_preview_cache` directory.
 - Ensure the process can read the media files you reference.
 - Video previews require manual transcoding to `_480p.mp4` files and placement in the cache directory.
 - ImageMagick is used for previews and thumbnails when converting images.
-- Closing the modal window stops video playback and audio.
+- Closing the fullscreen preview window stops video playback and audio.
 
 ## Troubleshooting
 

@@ -11,7 +11,10 @@ RUN cargo build --release
 FROM ubuntu:latest
 RUN apt update && apt install -y \
 	sqlite3 \
-	exiv2 \
+	ibpng-dev \
+	libjpeg-dev \
+	libtiff-dev \
+	imagemagick \
 	ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=0 /bin/ImageFind/target/release/ImageFind /bin/ImageFind
