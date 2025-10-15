@@ -39,7 +39,7 @@ pub fn generate_thumbnail(file_path: &str) -> Option<String> {
         
         match ext_str.as_str() {
             // Video formats - generate thumbnail from first frame
-            "mp4" | "avi" | "mov" | "wmv" | "flv" | "webm" | "mkv" | "m4v" | "3gp" | "ogv" => {
+            "mp4" | "avi" | "mov" | "wmv" | "flv" | "webm" | "mkv" | "m4v" | "3gp" | "mpg" | "mpeg" | "ogv" => {
                 log::info!("Processing video thumbnail: {file_path}");
                 
                 if let Some(thumbnail_base64) = generate_video_thumbnail(file_path) {
@@ -98,11 +98,26 @@ pub fn generate_preview(file_path: &str) -> Option<String> {
     
     log::debug!("No cached preview found, generating new one for: {file_path}");
 
-    if let Some(result) = generate_magick_preview(file_path) {
-        log::info!("Successfully generated thumbnail for file using magick");
-        return Some(result)
-    } else {
-        log::error!("Failed creating a thumbnail for: {file_path}");
-        None                    
-    }  
+    // Check file extension for supported formats
+    if let Some(extension) = path.extension() {
+        let ext_str = extension.to_string_lossy().to_lowercase();
+        log::trace!("File extension detected: {ext_str}");
+        match ext_str.as_str() {
+            "mp4" | "avi" | "mov" | "wmv" | "flv" | "webm" | "mkv" | "m4v" | "3gp" | "mpg" | "mpeg" | "ogv" => {
+                log::info!("Skiping preview for video file: {file_path}");
+                return None;
+            }
+            _ => {
+                if let Some(result) = generate_magick_preview(file_path) {
+                    log::info!("Successfully generated thumbnail for file using magick");
+                    return Some(result)
+                } else {
+                    log::error!("Failed creating a thumbnail for: {file_path}");
+                    return None;
+                }  
+            }
+        }
+    }
+    log::error!("Failed creating a thumbnail for: {file_path}");
+    return None;
 }
