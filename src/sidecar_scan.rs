@@ -18,7 +18,7 @@ pub fn scan_and_import_sidecars() -> Result<()> {
     let scan_dir = args.scan_dir.clone();
     let db_path = args.db_path.clone();
     
-    log::info!("Starting sidecar scan - Directory: {}, Database: {}", scan_dir, db_path);
+    log::info!("Starting sidecar scan - Directory: {scan_dir}, Database: {db_path}");
     
     let conn = Arc::new(Mutex::new(Connection::open(&db_path)?));
     log::debug!("Successfully opened database connection");
@@ -53,7 +53,7 @@ pub fn scan_and_import_sidecars() -> Result<()> {
         log::trace!("Key_value table created/verified");
     }
 
-    log::info!("Scanning directory for XMP files: {}", scan_dir);
+    log::info!("Scanning directory for XMP files: {scan_dir}");
     
     // Collect all XMP file paths first
     let xmp_files: Vec<_> = WalkDir::new(&scan_dir)
@@ -62,7 +62,7 @@ pub fn scan_and_import_sidecars() -> Result<()> {
             match e {
                 Ok(entry) => Some(entry),
                 Err(err) => {
-                    log::warn!("Error accessing directory entry: {}", err);
+                    log::warn!("Error accessing directory entry: {err}");
                     None
                 }
             }
@@ -80,13 +80,14 @@ pub fn scan_and_import_sidecars() -> Result<()> {
             }
             is_xmp
         })
-        .map(|entry| entry.path().to_owned())
+        // Convert to absolute path here
+        .map(|entry| entry.path().canonicalize().unwrap_or_else(|_| entry.path().to_owned()))
         .collect();
 
     log::info!("Found {} XMP files to process", xmp_files.len());
 
     if xmp_files.is_empty() {
-        log::warn!("No XMP files found in directory: {}", scan_dir);
+        log::warn!("No XMP files found in directory: {scan_dir}");
         return Ok(());
     }
 
@@ -95,8 +96,9 @@ pub fn scan_and_import_sidecars() -> Result<()> {
 
     // Process each XMP file in parallel
     xmp_files.par_iter().for_each(|path| {
+        // Use absolute path string for DB
         if let Some(path_str) = path.to_str() {
-            log::debug!("Processing XMP file: {}", path_str);
+            log::debug!("Processing XMP file: {path_str}");
 
             match extract_key_value(path_str) {
                 Some(kv) => {
@@ -108,9 +110,9 @@ pub fn scan_and_import_sidecars() -> Result<()> {
                             let mut buffer = Vec::new();
                             match file.read_to_end(&mut buffer) {
                                 Ok(bytes_read) => {
-                                    log::trace!("Read {} bytes from {}", bytes_read, path_str);
+                                    log::trace!("Read {bytes_read} bytes from {path_str}");
                                     let hash = xxh3_64(&buffer) as i64;
-                                    log::trace!("Generated hash {} for {}", hash, path_str);
+                                    log::trace!("Generated hash {hash} for {path_str}");
 
                                     // Acquire the database lock only for the DB operations
                                     let conn_guard = conn.lock();
@@ -127,16 +129,16 @@ pub fn scan_and_import_sidecars() -> Result<()> {
                                                                     let old_hash: i64 = row.get(1).unwrap();
                                                                     if old_hash == hash {
                                                                         // Already up to date, skip
-                                                                        log::trace!("File {} is up to date (hash {})", path_str, hash);
+                                                                        log::trace!("File {path_str} is up to date (hash {hash})");
                                                                         return;
                                                                     } else {
-                                                                        log::info!("File {} has changed, updating (old hash: {}, new hash: {})", path_str, old_hash, hash);
+                                                                        log::info!("File {path_str} has changed, updating (old hash: {old_hash}, new hash: {hash})");
                                                                         // Update hash
                                                                         if let Err(e) = conn.execute(
                                                                             "UPDATE file SET hash = ?1 WHERE id = ?2",
                                                                             params![hash, file_id],
                                                                         ) {
-                                                                            log::error!("Failed to update hash for {}: {}", path_str, e);
+                                                                            log::error!("Failed to update hash for {path_str}: {e}");
                                                                             let mut error_count = error_count.lock().unwrap();
                                                                             *error_count += 1;
                                                                             return;
@@ -144,24 +146,24 @@ pub fn scan_and_import_sidecars() -> Result<()> {
 
                                                                         // Delete all old key-values
                                                                         if let Err(e) = conn.execute("DELETE FROM key_value WHERE file_id = ?1", params![file_id]) {
-                                                                            log::error!("Failed to delete old key-values for {}: {}", path_str, e);
+                                                                            log::error!("Failed to delete old key-values for {path_str}: {e}");
                                                                             let mut error_count = error_count.lock().unwrap();
                                                                             *error_count += 1;
                                                                             return;
                                                                         }
 
                                                                         insert_key_values(conn, file_id, &kv);
-                                                                        log::info!("Updated file: {} [{}]", path_str, hash);
+                                                                        log::info!("Updated file: {path_str} [{hash}]");
                                                                     }
                                                                 }
                                                                 Ok(None) => {
-                                                                    log::info!("New file detected: {}", path_str);
+                                                                    log::info!("New file detected: {path_str}");
                                                                     // Insert new row into table file
                                                                     if let Err(e) = conn.execute(
                                                                         "INSERT INTO file (path, hash) VALUES (?1, ?2)",
                                                                         params![path_str, hash],
                                                                     ) {
-                                                                        log::error!("Failed to insert new file {}: {}", path_str, e);
+                                                                        log::error!("Failed to insert new file {path_str}: {e}");
                                                                         let mut error_count = error_count.lock().unwrap();
                                                                         *error_count += 1;
                                                                         return;
@@ -169,52 +171,52 @@ pub fn scan_and_import_sidecars() -> Result<()> {
                                                                     let file_id: i64 = conn.last_insert_rowid();
 
                                                                     insert_key_values(conn, file_id, &kv);
-                                                                    log::info!("Inserted file: {} [{}]", path_str, hash);
+                                                                    log::info!("Inserted file: {path_str} [{hash}]");
                                                                 }
                                                                 Err(e) => {
-                                                                    log::error!("Database query error for {}: {}", path_str, e);
+                                                                    log::error!("Database query error for {path_str}: {e}");
                                                                     let mut error_count = error_count.lock().unwrap();
                                                                     *error_count += 1;
                                                                 }
                                                             }
                                                         }
                                                         Err(e) => {
-                                                            log::error!("Failed to execute query for {}: {}", path_str, e);
+                                                            log::error!("Failed to execute query for {path_str}: {e}");
                                                             let mut error_count = error_count.lock().unwrap();
                                                             *error_count += 1;
                                                         }
                                                     }
                                                 }
                                                 Err(e) => {
-                                                    log::error!("Failed to prepare statement for {}: {}", path_str, e);
+                                                    log::error!("Failed to prepare statement for {path_str}: {e}");
                                                     let mut error_count = error_count.lock().unwrap();
                                                     *error_count += 1;
                                                 }
                                             }
                                         }
                                         Err(e) => {
-                                            log::error!("Failed to acquire database lock for {}: {:?}", path_str, e);
+                                            log::error!("Failed to acquire database lock for {path_str}: {e:?}");
                                             let mut error_count = error_count.lock().unwrap();
                                             *error_count += 1;
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    log::error!("Failed to read file {}: {}", path_str, e);
+                                    log::error!("Failed to read file {path_str}: {e}");
                                     let mut error_count = error_count.lock().unwrap();
                                     *error_count += 1;
                                 }
                             }
                         }
                         Err(e) => {
-                            log::error!("Failed to open file {}: {}", path_str, e);
+                            log::error!("Failed to open file {path_str}: {e}");
                             let mut error_count = error_count.lock().unwrap();
                             *error_count += 1;
                         }
                     }
                 }
                 None => {
-                    log::warn!("Failed to extract key-value pairs from {}", path_str);
+                    log::warn!("Failed to extract key-value pairs from {path_str}");
                     let mut error_count = error_count.lock().unwrap();
                     *error_count += 1;
                 }
@@ -229,7 +231,7 @@ pub fn scan_and_import_sidecars() -> Result<()> {
                 log::info!("Processed {} files so far", *processed_count);
             }
         } else {
-            log::error!("Invalid UTF-8 in file path: {:?}", path);
+            log::error!("Invalid UTF-8 in file path: {path:?}");
             let mut error_count = error_count.lock().unwrap();
             *error_count += 1;
         }
@@ -238,10 +240,10 @@ pub fn scan_and_import_sidecars() -> Result<()> {
     let final_processed = *processed_count.lock().unwrap();
     let final_errors = *error_count.lock().unwrap();
     
-    log::info!("Sidecar scan completed - Processed: {} files, Errors: {} files", final_processed, final_errors);
+    log::info!("Sidecar scan completed - Processed: {final_processed} files, Errors: {final_errors} files");
     
     if final_errors > 0 {
-        log::warn!("Scan completed with {} errors", final_errors);
+        log::warn!("Scan completed with {final_errors} errors");
     } else {
         log::info!("Scan completed successfully with no errors");
     }
@@ -263,12 +265,12 @@ fn insert_key_values(
         .map(|(_, v)| v.as_str())
         .unwrap_or("");
 
-    log::trace!("Inserting xmp:ModifyDate: {}", modify_date);
+    log::trace!("Inserting xmp:ModifyDate: {modify_date}");
     if let Err(e) = conn.execute(
         "INSERT INTO key_value (file_id, key, value) VALUES (?1, ?2, ?3)",
         params![file_id, "xmp:ModifyDate", modify_date],
     ) {
-        log::error!("Failed to insert xmp:ModifyDate for file_id {}: {}", file_id, e);
+        log::error!("Failed to insert xmp:ModifyDate for file_id {file_id}: {e}");
         return;
     }
 
@@ -277,23 +279,23 @@ fn insert_key_values(
     // Insert the rest of the key-values
     for (key, value) in kv {
         if key.contains("digiKam:TagsList") || key == "dc:title/rdf:Alt" {
-            log::trace!("Inserting key: {} = {}", key, value);
+            log::trace!("Inserting key: {key} = {value}");
             if let Err(e) = conn.execute(
                 "INSERT INTO key_value (file_id, key, value) VALUES (?1, ?2, ?3)",
                 params![file_id, key, value],
             ) {
-                log::error!("Failed to insert key-value {}='{}' for file_id {}: {}", key, value, file_id, e);
+                log::error!("Failed to insert key-value {key}='{value}' for file_id {file_id}: {e}");
             } else {
                 inserted_count += 1;
             }
         }
     }
     
-    log::debug!("Successfully inserted {} key-value pairs for file_id {}", inserted_count, file_id);
+    log::debug!("Successfully inserted {inserted_count} key-value pairs for file_id {file_id}");
 }
 
 fn extract_key_value(path: &str) -> Option<HashMap<String, String>> {
-    log::trace!("Extracting key-value pairs from XMP file: {}", path);
+    log::trace!("Extracting key-value pairs from XMP file: {path}");
     
     let xml = match fs::read_to_string(path) {
         Ok(content) => {
@@ -301,7 +303,7 @@ fn extract_key_value(path: &str) -> Option<HashMap<String, String>> {
             content
         }
         Err(e) => {
-            log::error!("Failed to read XMP file {}: {}", path, e);
+            log::error!("Failed to read XMP file {path}: {e}");
             return None;
         }
     };
@@ -353,7 +355,7 @@ fn extract_key_value(path: &str) -> Option<HashMap<String, String>> {
                         String::from_utf8_lossy(attr.key.as_ref())
                     );
                     let value = attr.unescape_value().unwrap_or_default().to_string();
-                    log::trace!("Found attribute: {} = {}", key, value);
+                    log::trace!("Found attribute: {key} = {value}");
                     kv.insert(key, value);
                 }
             }
@@ -371,7 +373,7 @@ fn extract_key_value(path: &str) -> Option<HashMap<String, String>> {
                             .map(|t| t.ends_with("rdf:li"))
                             .unwrap_or(false)
                     {
-                        log::trace!("Found TagsList item: {}", text);
+                        log::trace!("Found TagsList item: {text}");
                         tagslist_items.push(text.to_string());
                     // Collect rdf:li items under dc:title/rdf:Alt
                     } else if in_title
@@ -381,10 +383,10 @@ fn extract_key_value(path: &str) -> Option<HashMap<String, String>> {
                             .map(|t| t.ends_with("rdf:li"))
                             .unwrap_or(false)
                     {
-                        log::trace!("Found title item: {}", text);
+                        log::trace!("Found title item: {text}");
                         title_items.push(text.to_string());
                     } else {
-                        log::trace!("Found text content: {} = {}", key, text);
+                        log::trace!("Found text content: {key} = {text}");
                         kv.insert(key, text.to_string());
                     }
                 }
@@ -431,7 +433,7 @@ fn extract_key_value(path: &str) -> Option<HashMap<String, String>> {
                 break;
             }
             Err(e) => {
-                log::error!("XML parsing error in {}: {}", path, e);
+                log::error!("XML parsing error in {path}: {e}");
                 break;
             }
             _ => {}
@@ -443,7 +445,7 @@ fn extract_key_value(path: &str) -> Option<HashMap<String, String>> {
               path, element_count, text_count, kv.len());
     
     if kv.is_empty() {
-        log::warn!("No key-value pairs extracted from {}", path);
+        log::warn!("No key-value pairs extracted from {path}");
     }
     
     Some(kv)

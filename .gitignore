@@ -19,6 +19,10 @@ target/
 thumbnail_cache/
 full_image_cache/
 images/
+tests/tmp/
 
 # log files
 *.log
+
+# .github
+.github/

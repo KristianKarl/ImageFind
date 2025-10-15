@@ -15,7 +15,7 @@ async fn main() -> std::io::Result<()> {
     
 
     if let Err(e) = sidecar_scan::scan_and_import_sidecars() {
-        eprintln!("Error importing sidecars: {}", e);
+        eprintln!("Error importing sidecars: {e}");
     }
 
     let port = cli::CLI_ARGS.get().unwrap().port;

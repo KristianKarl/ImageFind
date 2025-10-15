@@ -6,12 +6,12 @@ use sha2::{Sha256, Digest};
 // Function to get thumbnail cache directory path
 pub fn get_cache_dir() -> std::path::PathBuf {
     // Try to get from CLI args if available, otherwise use temp directory for tests
-    match std::panic::catch_unwind(|| crate::cli::get_cli_args()) {
+    match std::panic::catch_unwind(crate::cli::get_cli_args) {
         Ok(args) => {
             let cache_dir = Path::new(&args.thumbnail_cache);
             if !cache_dir.exists() {
                 log::info!("Creating thumbnail cache directory: {}", cache_dir.display());
-                fs::create_dir_all(&cache_dir).expect("Failed to create cache directory");
+                fs::create_dir_all(cache_dir).expect("Failed to create cache directory");
             } else {
                 log::trace!("Thumbnail cache directory exists: {}", cache_dir.display());
             }
@@ -31,12 +31,12 @@ pub fn get_cache_dir() -> std::path::PathBuf {
 // Function to get cache directory path for full images
 pub fn get_preview_cache_dir() -> std::path::PathBuf {
     // Try to get from CLI args if available, otherwise use temp directory for tests
-    match std::panic::catch_unwind(|| crate::cli::get_cli_args()) {
+    match std::panic::catch_unwind(crate::cli::get_cli_args) {
         Ok(args) => {
             let cache_dir = Path::new(&args.full_image_cache);
             if !cache_dir.exists() {
                 log::info!("Creating preview cache directory: {}", cache_dir.display());
-                fs::create_dir_all(&cache_dir).expect("Failed to create full image cache directory");
+                fs::create_dir_all(cache_dir).expect("Failed to create full image cache directory");
             } else {
                 log::trace!("Preview cache directory exists: {}", cache_dir.display());
             }
@@ -58,16 +58,16 @@ pub fn generate_cache_key(file_path: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(file_path.as_bytes());
     let key = format!("{:x}", hasher.finalize());
-    log::trace!("Cache key {} for file is: {}", key, file_path);
+    log::trace!("Cache key {key} for file is: {file_path}");
     key
 }
 
 // Function to get cached thumbnail from disk
 pub fn get_cached_thumbnail(cache_key: &str) -> Option<String> {
     let cache_dir = get_cache_dir();
-    let cache_file = cache_dir.join(format!("{}.jpg", cache_key));
+    let cache_file = cache_dir.join(format!("{cache_key}.jpg"));
     
-    log::trace!("Checking thumbnail cache for key: {}", cache_key);
+    log::trace!("Checking thumbnail cache for key: {cache_key}");
     
     if cache_file.exists() {
         log::debug!("Found cached thumbnail: {}", cache_file.display());
@@ -82,7 +82,7 @@ pub fn get_cached_thumbnail(cache_key: &str) -> Option<String> {
             }
         }
     } else {
-        log::trace!("No cached thumbnail found for key: {}", cache_key);
+        log::trace!("No cached thumbnail found for key: {cache_key}");
         None
     }
 }
@@ -90,7 +90,7 @@ pub fn get_cached_thumbnail(cache_key: &str) -> Option<String> {
 // Function to save thumbnail to disk cache
 pub fn save_thumbnail_to_cache(cache_key: &str, jpeg_bytes: &[u8]) -> io::Result<()> {
     let cache_dir = get_cache_dir();
-    let cache_file = cache_dir.join(format!("{}.jpg", cache_key));
+    let cache_file = cache_dir.join(format!("{cache_key}.jpg"));
     
     log::debug!("Saving thumbnail to cache: {} ({} bytes)", cache_file.display(), jpeg_bytes.len());
     
@@ -109,9 +109,9 @@ pub fn save_thumbnail_to_cache(cache_key: &str, jpeg_bytes: &[u8]) -> io::Result
 // Function to get cached full image from disk
 pub fn get_cached_preview(cache_key: &str) -> Option<String> {
     let cache_dir = get_preview_cache_dir();
-    let cache_file = cache_dir.join(format!("{}.jpg", cache_key));
+    let cache_file = cache_dir.join(format!("{cache_key}.jpg"));
     
-    log::trace!("Checking if preview is cached using key: {}", cache_key);
+    log::trace!("Checking if preview is cached using key: {cache_key}");
     
     if cache_file.exists() {
         log::debug!("Found cached preview: {}", cache_file.display());
@@ -126,7 +126,7 @@ pub fn get_cached_preview(cache_key: &str) -> Option<String> {
             }
         }
     } else {
-        log::trace!("No cached preview found for key: {}", cache_key);
+        log::trace!("No cached preview found for key: {cache_key}");
         None
     }
 }
@@ -134,7 +134,7 @@ pub fn get_cached_preview(cache_key: &str) -> Option<String> {
 // Function to save full image to disk cache
 pub fn save_preview_to_cache(cache_key: &str, image_bytes: &[u8]) -> io::Result<()> {
     let cache_dir = get_preview_cache_dir();
-    let cache_file = cache_dir.join(format!("{}.jpg", cache_key));
+    let cache_file = cache_dir.join(format!("{cache_key}.jpg"));
 
     log::debug!("Saving preview to cache: {} ({} bytes)", cache_file.display(), image_bytes.len());
 
@@ -153,6 +153,6 @@ pub fn save_preview_to_cache(cache_key: &str, image_bytes: &[u8]) -> io::Result<
 // Function to check if a thumbnail exists in the cache
 pub fn thumbnail_exists_in_cache(cache_key: &str) -> bool {
     let cache_dir = get_cache_dir();
-    let cache_file = cache_dir.join(format!("{}.jpg", cache_key));
+    let cache_file = cache_dir.join(format!("{cache_key}.jpg"));
     cache_file.exists()
 }

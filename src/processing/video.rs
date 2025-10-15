@@ -8,7 +8,7 @@ use super::cache::{generate_cache_key};
 
 // Function to generate a video thumbnail using ffmpeg binary
 pub fn generate_video_thumbnail(file_path: &str) -> Option<String> {
-    log::info!("Generating video thumbnail for: {}", file_path);
+    log::info!("Generating video thumbnail for: {file_path}");
     
     // Create a temporary file for the thumbnail
     let temp_dir = env::temp_dir();
@@ -18,7 +18,7 @@ pub fn generate_video_thumbnail(file_path: &str) -> Option<String> {
     
     // Use ffmpeg to extract the first frame
     let output = Command::new("ffmpeg")
-        .args(&[
+        .args([
             "-i", file_path,           // Input file
             "-vf", "scale=200:200:force_original_aspect_ratio=decrease,pad=200:200:(ow-iw)/2:(oh-ih)/2", // Scale and pad to 200x200
             "-vframes", "1",           // Extract only 1 frame
@@ -31,7 +31,7 @@ pub fn generate_video_thumbnail(file_path: &str) -> Option<String> {
     match output {
         Ok(result) => {
             if result.status.success() {
-                log::debug!("ffmpeg completed successfully for: {}", file_path);
+                log::debug!("ffmpeg completed successfully for: {file_path}");
                 
                 if temp_thumbnail.exists() {
                     log::trace!("Temporary thumbnail file created: {}", temp_thumbnail.display());
@@ -62,12 +62,12 @@ pub fn generate_video_thumbnail(file_path: &str) -> Option<String> {
                                             return Some(BASE64.encode(&jpeg_bytes));
                                         },
                                         Err(e) => {
-                                            log::warn!("Failed to encode video thumbnail as JPEG: {:?}", e);
+                                            log::warn!("Failed to encode video thumbnail as JPEG: {e:?}");
                                         }
                                     }
                                 },
                                 Err(e) => {
-                                    log::warn!("Failed to load thumbnail with image crate: {:?}", e);
+                                    log::warn!("Failed to load thumbnail with image crate: {e:?}");
                                 }
                             }
                             
@@ -94,7 +94,7 @@ pub fn generate_video_thumbnail(file_path: &str) -> Option<String> {
             }
         }
         Err(e) => {
-            log::error!("Failed to execute ffmpeg for video {}: {}", file_path, e);
+            log::error!("Failed to execute ffmpeg for video {file_path}: {e}");
             
             // Clean up temp file if it exists
             if temp_thumbnail.exists() {
@@ -105,6 +105,6 @@ pub fn generate_video_thumbnail(file_path: &str) -> Option<String> {
         }
     }
     
-    log::warn!("Video thumbnail generation failed for: {}", file_path);
+    log::warn!("Video thumbnail generation failed for: {file_path}");
     None
 }
